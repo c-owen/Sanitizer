@@ -69,6 +69,7 @@ class Detection:
     reason: str  # human-readable "why flagged"
     canonical: str  # normalized identity (e.g. casefolded)
     restore: str  # value to put back on restore
+    score: float = 1.0  # model confidence in [0, 1]; 1.0 for exact/guaranteed hits
 
 
 @dataclass

@@ -25,9 +25,18 @@
 | **UX build — Step C (miss-catching)** | ✅ **done** (2026-06-30) | Reverse **"not touched — confirm these"** strip (heuristic candidates, UX-3/FR-22) + **select-to-redact everywhere** & add-to-list (FR-16). Pure-core `find_miss_candidates` + `build_manual_item`. |
 | **UX build — Step D (teach + scale)** | ✅ **done** (2026-06-30) — on branch `step-d-polish` | First-use key teaching (US6, dismiss-once); **informed auto-apply** (FR-12, gated on ≥1 reviewed run); in-window **declared-list editing** (US2 — "add to my list" now a real cross-transcript term); tree **filter**; grayscale styling. Two new pure stores: `appstate.py`, `declared_store.py`. |
 | **6 — Guarantee hardening + offline proof + DoD** | ✅ **done** (2026-06-30) — on branch `phase-6-guarantees` | **PG1–PG8** consolidated in one build-failing suite (`guarantees_test.py`), incl. the new **PG1 offline** (network primitives rigged to raise → guaranteed path still succeeds); **FR-14 extensibility** demo (new MAC detector + HTML format handler via public seams, no existing code touched); **locale-completeness** (14 files, no empty values); user-facing **README** (guarantees + limits + "key is the secret", NG2). |
+| **Suggestions — on-demand button** | ✅ **done** (2026-07-01) — CONFIRMED in real Buzz | "✨ Run suggestions" button; vendored GLiNER (`_vendor`, no pip); worker thread + windowed inference; base-backbone offline-load fix (§6). Surfaced the ~222-item problem. |
+| **Step E — run-once, triage-interactively** | ✅ **built on branch `step-e-triage`** (2026-07-01, pending review) | The ~222 answer: keep GLiNER's **confidence** on each item; a live **triage panel** (confidence slider + live count + type toggles + min-mentions + sort) filtering the computed set client-side (no re-run); **non-linear** review — SUGGESTIONS grouped by type with per-type + shown-wide **bulk** approve/reject, multi-select + Ctrl+Return/Ctrl+Backspace. `cloak_core` stays pure. |
 
-**Current state at a glance:** `cloak_core` **v0.7.0** · **247 tests pass** on system
-Python, **292** in `.venv-qt` (PyQt6 + hypothesis + markdown) · `ruff` clean.
+**Current state at a glance:** `cloak_core` **v0.7.0** · **251 tests pass** on system
+Python, **306** in `.venv-qt` (PyQt6 + hypothesis + markdown) · `ruff` clean.
+The **~222-suggestions problem is solved** on branch `step-e-triage` (pending your
+review/merge): one model run, then an interactive **triage** surface — GLiNER's
+confidence is kept per item; a **live control panel** (confidence slider + "N of M
+shown" count + person/org/place/project toggles + min-mentions + sort) filters the
+computed set **client-side with no re-run**; the SUGGESTIONS zone is **grouped by
+type** with per-type and shown-wide **bulk** approve/reject, multi-select and
+Ctrl+Return / Ctrl+Backspace. See §8 for the design and what remains (the cleanup).
 **Phases 0–6 + the full v2 UX (A–D) are done** — every product guarantee (PG1–PG8) is
 now backed by a build-failing test (`cloak/cloak_core/tests/guarantees_test.py`,
 including the offline PG1), FR-14 extensibility is demonstrated, locale files are
@@ -465,6 +474,25 @@ Lint everything: `uvx ruff check cloak tools` and `uvx ruff format cloak tools`.
   hub) and threads `cache_dir=model_root_dir` + `local_files_only` so the base resolves
   from Buzz's cache. Verified the base download fetches exactly `config.json` +
   `tokenizer_config.json` + `spm.model` (~4 MB), no weights.
+- **Suggestion triage is a *live view*, not an edit (Step E).** The confidence slider /
+  type toggles / min-mentions / sort **filter the already-computed suggestion set** —
+  they never re-run the model and never touch the sidecar. The model is asked **once**
+  at a low floor (`_SUGGESTION_FLOOR = 0.3`, matching the provider floor) so every
+  candidate is in hand; the slider default sits at `0.5`, so the *default* view still
+  matches the pre-triage behaviour and lowering it reveals the 0.3–0.5 band. Only
+  changing *which labels* the model searches would need a re-run. GLiNER's confidence
+  now rides on `ReviewItem.score` (max across windows; 1.0 for guaranteed items) and
+  round-trips through the sidecar. Bulk actions (`_approve_items`/`_reject_items`) do
+  **one** re-derive/persist for the whole batch (and still count as a review → FR-12).
+- **Qt `setItemWidget` cleanup is deferred — hide before rebuild (Step E gotcha).**
+  `QTreeWidget.removeItemWidget` (and `setItemWidget(None)`) only **`deleteLater()`** the
+  old widget, so rebuilding a subtree that has per-row button widgets (the suggestion
+  Approve/Reject pairs) on every slider tick leaves stale button pairs **painting for a
+  frame** before they're freed — visible phantom rows during a drag. `_clear_suggestion_children`
+  therefore **`hide()`s each item-widget synchronously** before removing it. (Verified
+  with an offscreen `grab()`: 40 live button objects mid-rebuild, but none paint.) The
+  full-rebuild path (`_tree.clear()`) doesn't hit this; only the targeted, selection-
+  preserving suggestion re-render does.
 - **KNOWN ISSUE — demo crashed Buzz on the *first* open, worked on the second.** Likely
   PyQt6's default of aborting the process on an unhandled exception inside a slot,
   triggered by a one-time first-run hiccup (lazy `cloak_core` import, or first-render
@@ -593,31 +621,38 @@ path. Offline load needs the base backbone (see §6 gotcha). Parameters today:
 `suggest.DEFAULT_THRESHOLD = 0.5`, provider floor `0.3`, labels
 `person/organization/location/project`, model `urchade/gliner_multi-v2.1`.
 
-**⏭ NEXT WORK — the "run-once, triage-interactively" surface (the ~222-items problem).**
-On a real 1450-segment council meeting, suggestions flagged **~222 entities** — NER finds
-every named entity, but a public meeting is wall-to-wall public people/orgs/streets;
-"named entity" ≠ "sensitive". User + agent agreed the fix is **compute once, then make the
-result an interactive triage surface** (no re-run). Concrete plan:
-- **Keep the score.** `suggest_items` currently discards GLiNER's confidence; keep the max
-  score per `ReviewItem` (small field) so a slider has something to filter on. Also request
-  **all** labels + low floor once, so type/threshold filtering is client-side and free.
-- **User-exposed live controls** (filter the computed set, instant, with a live count
-  "34 of 222"): a **confidence slider**, **type toggles** (person/org/place/project),
-  **min-mentions**. Optionally persist defaults in plugin settings.
-- **Non-linear review:** **group the Suggestions zone by type**, each with a count + a
-  **bulk action** ("reject all Places", "approve all People"); **sort by confidence or
-  rarity** (rarely-named ≈ often the private individual); **multi-select + keyboard**
-  (shift-click range, `a`/`r` approve/reject selection, `j/k` nav). This is the deferred
-  **FR-22 suspicion lens** made concrete.
-- **Boundary:** only changing *which labels* GLiNER searches needs a re-run; everything
-  else is a live view over the one result.
-Full discussion is in the transcript around the 222-items exchange.
+**✅ DONE (branch `step-e-triage`, pending review) — the "run-once, triage-interactively"
+surface (the ~222-items problem).** On a real 1450-segment council meeting, suggestions
+flagged **~222 entities** — NER finds every named entity, but a public meeting is
+wall-to-wall public people/orgs/streets; "named entity" ≠ "sensitive". Fix shipped:
+**compute once, then triage the result live** (no re-run). What was built:
+- **Kept the score.** `ModelSuggestionDetector` now carries the provider's confidence onto
+  `Detection.score`; `suggest_items` keeps the **max** per `ReviewItem.score` (round-trips
+  in the sidecar). The worker asks the model **once at `_SUGGESTION_FLOOR = 0.3`** so the
+  whole band is in hand and filtering is client-side and free.
+- **Live control panel** (`_build_suggestion_controls`, hidden until a run yields
+  suggestions): a **confidence slider** with a live **"N of M shown"** count, **type
+  toggles** (person/org/place/project), a **min-mentions** floor, and a **sort** chooser
+  (confidence / rarity / A–Z). All are pure-view — `_render_suggestions` rebuilds just the
+  SUGGESTIONS zone, no persist. (Filter prefs are **not** persisted yet — optional later.)
+- **Non-linear review:** the SUGGESTIONS zone is **grouped by type**, each subgroup with a
+  count + **Approve all / Reject all**; a panel-wide **Approve/Reject all shown**;
+  **multi-select** (ExtendedSelection) + **Ctrl+Return / Ctrl+Backspace** (chose modifier
+  keys over bare `a`/`r` to avoid an accidental-destructive keystroke — flagged for review).
+  Rarity sort surfaces the rarely-named first (≈ the private individual). = the deferred
+  **FR-22 suspicion lens**, made concrete.
+- **Tests:** +10 review-window triage tests (slider / toggles / min-mentions / rarity sort /
+  bulk shown / per-type bulk / multi-select keyboard / view-not-persisted) and +4 core
+  score tests (carry, max-across-windows, round-trip, detector score). 251 system / 306
+  `.venv-qt`, ruff clean. Offscreen `grab()` PNGs confirm the layout + the widget-cleanup fix.
 
-**Cleanup owed (do alongside/after the triage work):** `on_complete` still *can* run the
-old per-segment (frozen) suggestion path when `enable_suggestions` is on (default **off**,
-so dormant); retire that path + the `enable_suggestions` config field +
-`pipeline._auto_apply_suggestions` now the button supersedes them (FR-12 lives in
-`_on_suggestions_ready`). Also: exercise real GLiNER via opt-in `CLOAK_RUN_MODEL_TEST=1`.
+**⏭ NEXT — the cleanup owed (retire the superseded frozen path).** `on_complete` still
+*can* run the old per-segment (frozen-at-transcription) suggestion path when
+`enable_suggestions` is on (default **off**, so dormant); the button + triage now
+supersede it. Retire: the frozen suggestion path in `pipeline.py`, the `enable_suggestions`
+config field, and `pipeline._auto_apply_suggestions` (FR-12 lives in `_on_suggestions_ready`
++ the bulk actions). Also: exercise real GLiNER via opt-in `CLOAK_RUN_MODEL_TEST=1`; and
+optionally **persist triage defaults** (confidence/types) in plugin settings.
 
 **Smaller remaining items (optional / low priority):**
 - **Suspicion lens (FR-22, lowest priority):** an opt-in toggle that dims clearly-safe

@@ -16,12 +16,15 @@ import pytest
 pytest.importorskip("PyQt6")
 pytest.importorskip("pytestqt")
 
+from PyQt6.QtCore import Qt  # noqa: E402
 from PyQt6.QtWidgets import (  # noqa: E402
     QApplication,
     QLineEdit,
     QPlainTextEdit,
     QTextEdit,
 )
+
+_USER_ROLE = Qt.ItemDataRole.UserRole
 
 from cloak_core import (  # noqa: E402
     persistence,
@@ -131,6 +134,34 @@ def _miss_buttons(window):
     return window._miss_container.findChildren(QPushButton)
 
 
+def _suggestion_rows(window):
+    """Every leaf suggestion row across the per-type subgroups (grouped triage view)."""
+    group = window._group_suggestions
+    rows = []
+    for i in range(group.childCount()):
+        subgroup = group.child(i)
+        for j in range(subgroup.childCount()):
+            rows.append(subgroup.child(j))
+    return rows
+
+
+def _find_suggestion_row(window, needle):
+    for row in _suggestion_rows(window):
+        if needle in row.text(0):
+            return row
+    return None
+
+
+def _subgroup_rows(window, label):
+    """The ordered leaf rows under the named type subgroup (e.g. 'People')."""
+    group = window._group_suggestions
+    for i in range(group.childCount()):
+        subgroup = group.child(i)
+        if label in subgroup.text(0):
+            return [subgroup.child(j) for j in range(subgroup.childCount())]
+    return []
+
+
 def _new_window(tmp_path, qtbot):
     from cloak_host.review_window import ReviewWindow
 
@@ -210,8 +241,8 @@ def test_context_for_pending_suggestion_says_if_approved(tmp_path, qtbot):
     _write_with_suggestion(tmp_path)
     window = _new_window(tmp_path, qtbot)
 
-    # Acme is the sole child of the suggestions group.
-    window._tree.setCurrentItem(window._group_suggestions.child(0))
+    # Acme is the sole suggestion row (now nested under its 'Organizations' subgroup).
+    window._tree.setCurrentItem(_find_suggestion_row(window, "Acme"))
 
     assert window._ctx_after_label.text() == "IF APPROVED"
     # ORG is an entity label → lettered placeholder ({{ORG-A}}, not {{ORG-1}}).
@@ -561,9 +592,11 @@ def test_run_suggestions_adds_pending_items(tmp_path, qtbot):
     window._provider_factory = lambda: _StubProvider("Sarah Chen", "person")
 
     window._suggest_button.click()
-    qtbot.waitUntil(lambda: window._group_suggestions.childCount() > 0, timeout=5000)
+    qtbot.waitUntil(
+        lambda: _find_suggestion_row(window, "Sarah Chen") is not None, timeout=5000
+    )
 
-    row = window._group_suggestions.child(0)
+    row = _find_suggestion_row(window, "Sarah Chen")
     assert "Sarah Chen" in row.text(0)
     assert "sarah chen" in window._suggestion_buttons  # Approve/Reject offered
     assert "Sarah Chen" in window._scrubbed_text  # held PENDING (FR-9), not removed
@@ -598,3 +631,184 @@ def test_run_suggestions_auto_applies_when_opted_in(tmp_path, qtbot):
 
     # Opted in after a review → the found suggestion is auto-approved and removed.
     assert "Sarah Chen" in window._sidecar.key.entries.values()
+
+
+# --- live suggestion triage (the ~222-item problem) -------------------------
+class _ScoredProvider:
+    """Finds each ``(surface, label, score)`` everywhere it appears — a richer stub
+    than _StubProvider, for exercising the confidence / type / mention filters."""
+
+    def __init__(self, *specs):
+        self._specs = specs
+
+    def predict(self, text, labels):
+        out = []
+        for surface, label, score in self._specs:
+            start = text.find(surface)
+            while start >= 0:
+                out.append(RawEntity(start, start + len(surface), label, score))
+                start = text.find(surface, start + len(surface))
+        return out
+
+
+def _write_scored_suggestions(directory):
+    """A sidecar carrying four undeclared suggestions of varied score / type / count:
+    Alice (person, 0.92, ×2), Bob (person, 0.40, ×1), Carol (person, 0.80, ×1),
+    Globex (org, 0.60, ×1). Built through the real ``suggest_items`` so scores flow."""
+    from cloak_core.transcript import suggest_items
+
+    base = sanitize_transcript(
+        [Seg(0, 1, "Alice met Alice and Bob"), Seg(1, 2, "then Carol at Globex")],
+        [DeclaredListDetector(["Zzz"])],
+    )
+    detector = ModelSuggestionDetector(
+        _ScoredProvider(
+            ("Alice", "person", 0.92),
+            ("Bob", "person", 0.40),
+            ("Carol", "person", 0.80),
+            ("Globex", "organization", 0.60),
+        ),
+        threshold=0.3,
+    )
+    base.items.extend(suggest_items(base.segments, detector, known_canonicals=set()))
+    persistence.write_sidecar(directory / "sc", base, _meta(base))
+    return base
+
+
+def _pending_names(window):
+    from cloak_core import DecisionState
+
+    names = set()
+    for row in _suggestion_rows(window):
+        item = row.data(0, _USER_ROLE)
+        if item is not None and item.state == DecisionState.PENDING:
+            names.add(item.original)
+    return names
+
+
+def test_triage_controls_visible_with_a_live_count(tmp_path, qtbot):
+    _write_scored_suggestions(tmp_path)
+    window = _new_window(tmp_path, qtbot)
+
+    assert window._sugg_controls.isVisibleTo(window)
+    # Default confidence 50% hides Bob (0.40); Alice/Carol/Globex remain.
+    assert "3 of 4" in window._sugg_count_label.text()
+    assert _pending_names(window) == {"Alice", "Carol", "Globex"}
+
+
+def test_confidence_slider_narrows_the_shown_set(tmp_path, qtbot):
+    _write_scored_suggestions(tmp_path)
+    window = _new_window(tmp_path, qtbot)
+
+    window._confidence_slider.setValue(85)  # only Alice (0.92) clears the bar
+
+    assert _pending_names(window) == {"Alice"}
+    assert "1 of 4" in window._sugg_count_label.text()
+
+    window._confidence_slider.setValue(30)  # everything down to the floor
+    assert _pending_names(window) == {"Alice", "Bob", "Carol", "Globex"}
+    assert "4 of 4" in window._sugg_count_label.text()
+
+
+def test_type_toggle_hides_a_whole_category(tmp_path, qtbot):
+    _write_scored_suggestions(tmp_path)
+    window = _new_window(tmp_path, qtbot)
+
+    window._type_checks["person"].setChecked(False)
+
+    assert _pending_names(window) == {"Globex"}  # only the org survives
+
+
+def test_min_mentions_floor_filters_rare_single_hits(tmp_path, qtbot):
+    _write_scored_suggestions(tmp_path)
+    window = _new_window(tmp_path, qtbot)
+
+    window._min_mentions_spin.setValue(2)  # only Alice appears twice
+
+    assert _pending_names(window) == {"Alice"}
+
+
+def test_sort_by_rarity_puts_the_rarely_named_first(tmp_path, qtbot):
+    _write_scored_suggestions(tmp_path)
+    window = _new_window(tmp_path, qtbot)
+    window._confidence_slider.setValue(30)  # show all People (Alice×2, Bob, Carol)
+
+    # Confidence (default): highest score first → Alice leads.
+    people = [r.text(0).strip() for r in _subgroup_rows(window, "People")]
+    assert people[0] == "Alice"
+
+    # Rarity: count-ascending → the single-mention names lead, Alice (×2) last.
+    window._sort_combo.setCurrentIndex(1)
+    people = [r.text(0).strip() for r in _subgroup_rows(window, "People")]
+    assert people[-1] == "Alice"
+    assert set(people[:2]) == {"Bob", "Carol"}
+
+
+def test_approve_all_shown_leaves_filtered_out_items_untouched(tmp_path, qtbot):
+    _write_scored_suggestions(tmp_path)
+    window = _new_window(tmp_path, qtbot)  # default: Bob (0.40) is filtered out
+
+    window._approve_shown_button.click()
+
+    for approved in ("Alice", "Carol", "Globex"):
+        assert approved not in window._scrubbed_text  # removed
+    assert "Bob" in window._scrubbed_text  # below the floor → never approved
+
+
+def test_reject_all_shown_moves_them_to_cleartext(tmp_path, qtbot):
+    _write_scored_suggestions(tmp_path)
+    window = _new_window(tmp_path, qtbot)
+
+    window._reject_shown_button.click()
+
+    # The three shown suggestions are kept in cleartext; hidden Bob stays pending.
+    assert window._group_cleartext.childCount() == 3
+    assert _pending_names(window) == set()  # none shown pending remain
+
+
+def test_multiselect_then_keyboard_action_approves_the_selection(tmp_path, qtbot):
+    _write_scored_suggestions(tmp_path)
+    window = _new_window(tmp_path, qtbot)
+
+    _find_suggestion_row(window, "Alice").setSelected(True)
+    _find_suggestion_row(window, "Carol").setSelected(True)
+    window._approve_sel_action.trigger()  # the Ctrl+Return path, minus the keypress
+
+    assert "Alice" not in window._scrubbed_text
+    assert "Carol" not in window._scrubbed_text
+    assert "Globex" in window._scrubbed_text  # unselected → untouched
+
+
+def test_per_type_bulk_reject_targets_only_that_type(tmp_path, qtbot):
+    from PyQt6.QtWidgets import QPushButton
+
+    _write_scored_suggestions(tmp_path)
+    window = _new_window(tmp_path, qtbot)
+
+    # The 'Organizations' subgroup header carries its own Approve all / Reject all.
+    group = window._group_suggestions
+    org_header = next(
+        group.child(i)
+        for i in range(group.childCount())
+        if "Organizations" in group.child(i).text(0)
+    )
+    holder = window._tree.itemWidget(org_header, 3)
+    reject_all = next(
+        b for b in holder.findChildren(QPushButton) if b.text() == "Reject all"
+    )
+    reject_all.click()
+
+    assert "Globex" in window._scrubbed_text  # the org kept in cleartext
+    assert _pending_names(window) == {"Alice", "Carol"}  # people untouched
+
+
+def test_triage_filters_do_not_persist_or_mutate_the_sidecar(tmp_path, qtbot):
+    _write_scored_suggestions(tmp_path)
+    window = _new_window(tmp_path, qtbot)
+
+    window._confidence_slider.setValue(95)  # a pure view change
+    window._type_checks["org"].setChecked(False)
+
+    # Filtering is a view, not an edit: every suggestion is still PENDING on disk.
+    reopened = _new_window(tmp_path, qtbot)
+    assert _pending_names(reopened) == {"Alice", "Carol", "Globex"}  # default view

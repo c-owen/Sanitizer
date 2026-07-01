@@ -183,6 +183,7 @@ class ModelSuggestionDetector:
                     ),
                     canonical=_canonical(value),
                     restore=value,
+                    score=entity.score,
                 )
             )
         return detections

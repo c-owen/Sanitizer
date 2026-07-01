@@ -34,6 +34,7 @@ import re
 from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QAction, QFontDatabase, QKeySequence
 from PyQt6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QButtonGroup,
     QCheckBox,
@@ -47,6 +48,8 @@ from PyQt6.QtWidgets import (
     QListWidget,
     QPlainTextEdit,
     QPushButton,
+    QSlider,
+    QSpinBox,
     QSplitter,
     QStackedWidget,
     QToolButton,
@@ -81,6 +84,29 @@ _GUARANTEED = (TrustTier.DECLARED, TrustTier.PII)
 _USER_ROLE = Qt.ItemDataRole.UserRole
 _PLACEHOLDER_RE = re.compile(r"\{\{[^{}]+\}\}")
 _MODE_INDEX = {"review": 0, "sendout": 1, "restore": 2}
+
+# --- suggestion triage (the "run once, filter live" surface) ----------------
+# The floor at which we ask the model once, so *all* candidates down to here are in
+# hand and the confidence slider filters them client-side with no re-run. It matches
+# the provider's own pre-filter floor; the slider default sits above it.
+_SUGGESTION_FLOOR = 0.3
+_SUGGESTION_MIN_DEFAULT = 0.5  # slider default (== the pre-triage detector cutoff)
+# Suggestion categories in display order (``type`` value → human label). These are
+# the four categories the model maps to (cloak_core.categories); the toggles filter
+# the computed set by them.
+_SUGGESTION_TYPES: tuple[tuple[str, str], ...] = (
+    ("person", "People"),
+    ("org", "Organizations"),
+    ("place", "Places"),
+    ("project", "Projects"),
+)
+# Sort keys offered for the pending suggestions (id → label). "Rarity" surfaces the
+# rarely-named first — often the private individual in a sea of public figures.
+_SUGGESTION_SORTS: tuple[tuple[str, str], ...] = (
+    ("confidence", "Confidence (high → low)"),
+    ("rarity", "Rarity (rare → common)"),
+    ("alpha", "Name (A → Z)"),
+)
 
 # Minimal, grayscale-first accents (design tokens). Meaning is carried by words +
 # glyphs + grouping; colour only reinforces (UX-5).
@@ -164,7 +190,9 @@ class _SuggestionWorker(QThread):
                 )
             else:
                 self.status.emit(_("Analysing the transcript…"))
-            detector = ModelSuggestionDetector(provider)
+            # Ask once at a low floor: pull every candidate down to _SUGGESTION_FLOOR
+            # so the confidence slider can tighten the view later with no re-run.
+            detector = ModelSuggestionDetector(provider, threshold=_SUGGESTION_FLOOR)
             items = suggest_items(
                 self._segments, detector, known_canonicals=self._known
             )
@@ -217,10 +245,33 @@ class ReviewWindow(QWidget):
         self._provider_factory = _default_suggestion_provider
         self._suggest_worker: _SuggestionWorker | None = None
 
+        # Live triage state (filters the computed suggestion set client-side; no
+        # re-run). Defaults reproduce the pre-triage view (everything ≥ 0.5).
+        self._sugg_min_score = _SUGGESTION_MIN_DEFAULT
+        self._sugg_types = {type_ for type_, _label in _SUGGESTION_TYPES}
+        self._sugg_min_mentions = 1
+        self._sugg_sort = _SUGGESTION_SORTS[0][0]
+        self._shown_pending: list = []
+
         # Keyboard-accessible reject for guaranteed rows (context menu + shortcut).
         self._keep_action = QAction(_("Keep in cleartext"), self)
         self._keep_action.setShortcut(QKeySequence("Ctrl+K"))
         self._keep_action.triggered.connect(self._keep_selected_in_cleartext)
+        # Bulk approve/reject the current (multi-)selection of pending suggestions.
+        # Modifier shortcuts (not bare a/r) so a stray keystroke can't approve a
+        # selection by accident; also reachable from the tree's context menu.
+        self._approve_sel_action = QAction(_("Approve selected suggestions"), self)
+        self._approve_sel_action.setShortcut(QKeySequence("Ctrl+Return"))
+        self._approve_sel_action.triggered.connect(self._approve_selected_suggestions)
+        self._reject_sel_action = QAction(_("Reject selected suggestions"), self)
+        self._reject_sel_action.setShortcut(QKeySequence("Ctrl+Backspace"))
+        self._reject_sel_action.triggered.connect(self._reject_selected_suggestions)
+        for action in (
+            self._keep_action,
+            self._approve_sel_action,
+            self._reject_sel_action,
+        ):
+            action.setShortcutContext(Qt.ShortcutContext.WidgetShortcut)
 
         layout = QVBoxLayout(self)
 
@@ -350,11 +401,17 @@ class ReviewWindow(QWidget):
         self._filter_edit.setClearButtonEnabled(True)
         self._filter_edit.textChanged.connect(self._apply_filter)
         left_layout.addWidget(self._filter_edit)
+        left_layout.addWidget(self._build_suggestion_controls())
         self._tree = QTreeWidget()
         self._tree.setColumnCount(4)
         self._tree.setHeaderLabels([_("item"), _("was"), _("×"), _("provenance")])
         self._tree.setRootIsDecorated(True)
+        self._tree.setSelectionMode(
+            QAbstractItemView.SelectionMode.ExtendedSelection  # shift/ctrl multi-select
+        )
         self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.ActionsContextMenu)
+        self._tree.addAction(self._approve_sel_action)
+        self._tree.addAction(self._reject_sel_action)
         self._tree.addAction(self._keep_action)
         self._tree.itemSelectionChanged.connect(self._on_selection_changed)
         left_layout.addWidget(self._tree, 1)
@@ -364,6 +421,100 @@ class ReviewWindow(QWidget):
         split.addWidget(self._build_context_pane())
         split.setSizes([560, 360])
         return split
+
+    def _build_suggestion_controls(self) -> QWidget:
+        """Live triage controls over the *computed* suggestion set (no re-run).
+
+        A confidence slider, per-type toggles and a min-mentions floor filter which
+        pending suggestions are shown; a sort chooser reorders them; two bulk buttons
+        act on everything currently shown. Hidden until a run produces suggestions.
+        This is the ~222-item answer: compute once, then narrow interactively.
+        """
+        frame = QFrame()
+        frame.setObjectName("cloak_suggestion_controls")
+        outer = QVBoxLayout(frame)
+        outer.setContentsMargins(8, 6, 8, 6)
+        outer.setSpacing(4)
+
+        heading = QHBoxLayout()
+        title = QLabel("◇ " + _("Triage suggestions"))
+        title_font = title.font()
+        title_font.setBold(True)
+        title.setFont(title_font)
+        heading.addWidget(title)
+        heading.addStretch(1)
+        self._sugg_count_label = QLabel("")
+        self._sugg_count_label.setStyleSheet("color:#4a4742;")
+        heading.addWidget(self._sugg_count_label)
+        outer.addLayout(heading)
+
+        conf_row = QHBoxLayout()
+        conf_row.addWidget(QLabel(_("Confidence ≥")))
+        self._confidence_slider = QSlider(Qt.Orientation.Horizontal)
+        self._confidence_slider.setRange(int(_SUGGESTION_FLOOR * 100), 100)
+        self._confidence_slider.setValue(int(self._sugg_min_score * 100))
+        self._confidence_slider.setFixedWidth(150)
+        self._confidence_slider.setToolTip(
+            _("Hide suggestions the model is less sure about.")
+        )
+        self._confidence_slider.valueChanged.connect(self._on_confidence_changed)
+        conf_row.addWidget(self._confidence_slider)
+        self._confidence_label = QLabel(f"{int(self._sugg_min_score * 100)}%")
+        self._confidence_label.setFixedWidth(38)
+        conf_row.addWidget(self._confidence_label)
+        conf_row.addWidget(QLabel(_("Min mentions")))
+        self._min_mentions_spin = QSpinBox()
+        self._min_mentions_spin.setRange(1, 99)
+        self._min_mentions_spin.setValue(self._sugg_min_mentions)
+        self._min_mentions_spin.setToolTip(
+            _("Require a name to appear at least this many times.")
+        )
+        self._min_mentions_spin.valueChanged.connect(self._on_min_mentions_changed)
+        conf_row.addWidget(self._min_mentions_spin)
+        conf_row.addStretch(1)
+        outer.addLayout(conf_row)
+
+        type_row = QHBoxLayout()
+        type_row.addWidget(QLabel(_("Types:")))
+        self._type_checks: dict[str, QCheckBox] = {}
+        for type_, label in _SUGGESTION_TYPES:
+            check = QCheckBox(_(label))
+            check.setChecked(True)
+            check.toggled.connect(
+                lambda checked, tt=type_: self._on_type_toggled(tt, checked)
+            )
+            self._type_checks[type_] = check
+            type_row.addWidget(check)
+        type_row.addStretch(1)
+        type_row.addWidget(QLabel(_("Sort")))
+        self._sort_combo = QComboBox()
+        for sort_id, sort_label in _SUGGESTION_SORTS:
+            self._sort_combo.addItem(_(sort_label), sort_id)
+        self._sort_combo.currentIndexChanged.connect(self._on_sort_changed)
+        type_row.addWidget(self._sort_combo)
+        outer.addLayout(type_row)
+
+        bulk_row = QHBoxLayout()
+        self._approve_shown_button = QPushButton(_("Approve all shown"))
+        self._approve_shown_button.clicked.connect(
+            lambda: self._approve_items(list(self._shown_pending))
+        )
+        bulk_row.addWidget(self._approve_shown_button)
+        self._reject_shown_button = QPushButton(_("Reject all shown"))
+        self._reject_shown_button.clicked.connect(
+            lambda: self._reject_items(list(self._shown_pending))
+        )
+        bulk_row.addWidget(self._reject_shown_button)
+        bulk_row.addStretch(1)
+        outer.addLayout(bulk_row)
+
+        frame.setStyleSheet(
+            "QFrame#cloak_suggestion_controls "
+            "{ background:#f4f2ee; border:1px solid #cfccc6; }"
+        )
+        self._sugg_controls = frame
+        frame.setVisible(False)
+        return frame
 
     def _build_miss_strip(self) -> QWidget:
         """The reverse 'not touched — confirm these' strip (UX-3 / FR-22).
@@ -738,11 +889,6 @@ class ReviewWindow(QWidget):
             for i in items
             if i.tier in _GUARANTEED and i.state == DecisionState.APPROVED
         ]
-        suggestions = [
-            i
-            for i in items
-            if i.tier == TrustTier.SUGGESTED and i.state != DecisionState.REJECTED
-        ]
         rejected = [i for i in items if i.state == DecisionState.REJECTED]
 
         self._group_removed = self._add_group(
@@ -761,8 +907,6 @@ class ReviewWindow(QWidget):
             bold=True,
             italic=True,
         )
-        for item in suggestions:
-            self._add_suggestion_row(item)
 
         self._group_cleartext = self._add_group(
             "▸  " + _("Keeping in cleartext") + f" ({len(rejected)})"
@@ -771,12 +915,124 @@ class ReviewWindow(QWidget):
             self._add_cleartext_row(item)
 
         self._group_removed.setExpanded(True)
-        self._group_suggestions.setExpanded(True)
         self._group_cleartext.setExpanded(False)
+        # The SUGGESTIONS zone is a live view over the computed set — grouped, sorted
+        # and filtered by the triage controls. It also re-applies the text filter.
+        self._render_suggestions(items)
         self._apply_tree_widths()
         self._update_row_actions()
+
+    def _render_suggestions(self, items) -> None:
+        """(Re)build only the SUGGESTIONS zone from the current triage filters.
+
+        Grouped by type, sorted, with per-type and shown-wide bulk actions; the count
+        reads "N of M shown". Cheap enough to call on every slider tick — it rebuilds
+        just this zone, leaving REMOVED / Keeping-in-cleartext (and their state) alone.
+        This is the ~222-suggestions answer: one model run, then narrow it live.
+        """
+        if not hasattr(self, "_group_suggestions"):
+            return
+        self._clear_suggestion_children()
+        self._suggestion_buttons = {}
+
+        suggestions = [
+            i
+            for i in items
+            if i.tier == TrustTier.SUGGESTED and i.state != DecisionState.REJECTED
+        ]
+        pending = [i for i in suggestions if i.state == DecisionState.PENDING]
+        approved = [i for i in suggestions if i.state == DecisionState.APPROVED]
+        shown_pending = [i for i in pending if self._passes_suggestion(i)]
+        self._shown_pending = shown_pending
+        keyer = self._suggestion_sort_key()
+
+        for type_, label in _SUGGESTION_TYPES:
+            if type_ not in self._sugg_types:
+                continue  # a toggled-off type collapses (pending and approved)
+            type_pending = sorted(
+                (i for i in shown_pending if i.type == type_), key=keyer
+            )
+            type_approved = sorted(
+                (i for i in approved if i.type == type_),
+                key=lambda i: i.original.casefold(),
+            )
+            if not type_pending and not type_approved:
+                continue
+            self._add_suggestion_subgroup(_(label), type_pending, type_approved)
+
+        self._group_suggestions.setExpanded(True)
+        self._sugg_count_label.setText(
+            _("{shown} of {total} shown").format(
+                shown=len(shown_pending), total=len(pending)
+            )
+        )
+        self._sugg_controls.setVisible(bool(suggestions))
+        self._approve_shown_button.setEnabled(bool(shown_pending))
+        self._reject_shown_button.setEnabled(bool(shown_pending))
         if hasattr(self, "_filter_edit"):
             self._apply_filter(self._filter_edit.text())
+
+    def _clear_suggestion_children(self) -> None:
+        """Drop the suggestions subtree, removing its item-widgets (the per-row and
+        per-type bulk buttons) so they don't linger in the tree's viewport.
+
+        ``removeItemWidget`` only schedules the old widget for *deferred* deletion, so
+        on a rapid rebuild (dragging the confidence slider) a stale button pair can
+        paint for a frame before it is freed. Hiding it first stops that instantly.
+        """
+        group = self._group_suggestions
+        stack = [group.child(i) for i in range(group.childCount())]
+        while stack:
+            node = stack.pop()
+            widget = self._tree.itemWidget(node, 3)
+            if widget is not None:
+                widget.hide()
+            self._tree.removeItemWidget(node, 3)
+            stack.extend(node.child(i) for i in range(node.childCount()))
+        group.takeChildren()
+
+    def _passes_suggestion(self, item) -> bool:
+        """Whether a PENDING suggestion passes the live triage filters."""
+        return (
+            item.type in self._sugg_types
+            and item.score >= self._sugg_min_score
+            and item.count >= self._sugg_min_mentions
+        )
+
+    def _suggestion_sort_key(self):
+        if self._sugg_sort == "rarity":
+            return lambda i: (i.count, -i.score, i.original.casefold())
+        if self._sugg_sort == "alpha":
+            return lambda i: i.original.casefold()
+        return lambda i: (-i.score, i.original.casefold())  # confidence (default)
+
+    def _add_suggestion_subgroup(self, label, pending_items, approved_items) -> None:
+        header = QTreeWidgetItem([f"  {label} ({len(pending_items)})", "", "", ""])
+        font = header.font(0)
+        font.setBold(True)
+        header.setFont(0, font)
+        self._group_suggestions.addChild(header)
+        if pending_items:
+            holder = QWidget()
+            box = QHBoxLayout(holder)
+            box.setContentsMargins(0, 0, 0, 0)
+            box.setSpacing(4)
+            approve = QPushButton(_("Approve all"))
+            reject = QPushButton(_("Reject all"))
+            approve.clicked.connect(
+                lambda _c=False, its=list(pending_items): self._approve_items(its)
+            )
+            reject.clicked.connect(
+                lambda _c=False, its=list(pending_items): self._reject_items(its)
+            )
+            box.addWidget(approve)
+            box.addWidget(reject)
+            self._tree.setItemWidget(header, 3, holder)
+        for item in pending_items:
+            self._add_suggestion_row(item, header)
+        for item in approved_items:
+            self._add_suggestion_row(item, header)
+        header.setExpanded(True)
 
     def _add_group(
         self, text: str, *, bold: bool = False, italic: bool = False
@@ -803,10 +1059,16 @@ class ReviewWindow(QWidget):
         row.setData(0, _USER_ROLE, item)
         self._group_removed.addChild(row)
 
-    def _add_suggestion_row(self, item) -> None:
-        row = QTreeWidgetItem(["    " + item.original, item.type, f"{item.count}×", ""])
+    def _add_suggestion_row(self, item, parent) -> None:
+        if item.state == DecisionState.PENDING:
+            col1 = _("{kind} · {pct}%").format(
+                kind=item.type, pct=round(item.score * 100)
+            )
+        else:
+            col1 = item.type
+        row = QTreeWidgetItem(["    " + item.original, col1, f"{item.count}×", ""])
         row.setData(0, _USER_ROLE, item)
-        self._group_suggestions.addChild(row)
+        parent.addChild(row)
         if item.state == DecisionState.PENDING:
             holder = QWidget()
             box = QHBoxLayout(holder)
@@ -893,6 +1155,11 @@ class ReviewWindow(QWidget):
                 why=item.reason,
             )
         )
+        if item.tier == TrustTier.SUGGESTED:
+            self._ctx_meta.setText(
+                self._ctx_meta.text()
+                + _("\nModel confidence: {pct}%").format(pct=round(item.score * 100))
+            )
         self._ctx_prompt.setText(_("Is removing this one correct?"))
         original, after = self._context_window(item, placeholder)
         self._ctx_orig.setPlainText(original)
@@ -996,6 +1263,44 @@ class ReviewWindow(QWidget):
         self._set_item_approved(item, True)
         self._apply_edits()
 
+    def _approve_items(self, items) -> None:
+        """Approve a batch of items with a single re-derive/persist (bulk triage)."""
+        items = [i for i in items if i is not None]
+        if not items:
+            return
+        for item in items:
+            self._set_item_approved(item, True)
+        self._apply_edits()
+
+    def _reject_items(self, items) -> None:
+        """Reject (keep-in-cleartext) a batch with a single re-derive/persist."""
+        items = [i for i in items if i is not None]
+        if not items:
+            return
+        for item in items:
+            self._set_item_approved(item, False)
+        self._apply_edits()
+
+    def _approve_selected_suggestions(self) -> None:
+        self._approve_items(self._selected_pending_suggestions())
+
+    def _reject_selected_suggestions(self) -> None:
+        self._reject_items(self._selected_pending_suggestions())
+
+    def _selected_items(self) -> list:
+        return [
+            data
+            for data in (row.data(0, _USER_ROLE) for row in self._tree.selectedItems())
+            if data is not None
+        ]
+
+    def _selected_pending_suggestions(self) -> list:
+        return [
+            i
+            for i in self._selected_items()
+            if i.tier == TrustTier.SUGGESTED and i.state == DecisionState.PENDING
+        ]
+
     def _approve_everything(self) -> None:
         if self._sidecar is None:
             return
@@ -1019,6 +1324,9 @@ class ReviewWindow(QWidget):
         self._keep_action.setEnabled(
             item is not None and item.state != DecisionState.REJECTED
         )
+        has_pending = bool(self._selected_pending_suggestions())
+        self._approve_sel_action.setEnabled(has_pending)
+        self._reject_sel_action.setEnabled(has_pending)
 
     def _set_item_approved(self, item, approved: bool) -> None:
         if approved:
@@ -1113,6 +1421,33 @@ class ReviewWindow(QWidget):
         if worker is not None:
             worker.deleteLater()
 
+    # --- live suggestion triage (filter the computed set; no re-run) ---------
+    def _on_confidence_changed(self, value: int) -> None:
+        self._sugg_min_score = value / 100.0
+        self._confidence_label.setText(f"{value}%")
+        self._rerender_suggestions_view()
+
+    def _on_min_mentions_changed(self, value: int) -> None:
+        self._sugg_min_mentions = value
+        self._rerender_suggestions_view()
+
+    def _on_type_toggled(self, type_: str, checked: bool) -> None:
+        if checked:
+            self._sugg_types.add(type_)
+        else:
+            self._sugg_types.discard(type_)
+        self._rerender_suggestions_view()
+
+    def _on_sort_changed(self, index: int) -> None:
+        self._sugg_sort = self._sort_combo.itemData(index) or "confidence"
+        self._rerender_suggestions_view()
+
+    def _rerender_suggestions_view(self) -> None:
+        """Re-render only the suggestions zone from the current filters — a pure view
+        change (no state edit, no persist), instant even at hundreds of rows."""
+        if self._sidecar is not None:
+            self._render_suggestions(self._sidecar.items)
+
     # --- preferences · declared list · filter (Step D) ----------------------
     def _save_prefs(self) -> None:
         if not self._base_dir:
@@ -1165,16 +1500,25 @@ class ReviewWindow(QWidget):
         _DeclaredListEditor(self._base_dir, self).exec()
 
     def _apply_filter(self, text: str) -> None:
-        """Hide decision rows that don't match ``text`` (zone headers always stay)."""
+        """Hide decision rows that don't match ``text`` (zone/type headers always
+        stay). Walks into the suggestion type subgroups so nested rows filter too."""
         needle = text.strip().casefold()
+
+        def walk(node) -> None:
+            for index in range(node.childCount()):
+                child = node.child(index)
+                if child.data(0, _USER_ROLE) is not None:  # a decision row, not header
+                    child.setHidden(
+                        bool(needle) and needle not in self._row_haystack(child)
+                    )
+                walk(child)
+
         for group in (
             self._group_removed,
             self._group_suggestions,
             self._group_cleartext,
         ):
-            for index in range(group.childCount()):
-                row = group.child(index)
-                row.setHidden(bool(needle) and needle not in self._row_haystack(row))
+            walk(group)
 
     @staticmethod
     def _row_haystack(row) -> str:

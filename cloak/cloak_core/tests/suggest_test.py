@@ -82,6 +82,12 @@ def test_repeated_suggestion_yields_one_per_occurrence():
     assert {d.canonical for d in dets} == {"dana"}
 
 
+def test_detection_carries_the_model_score():
+    # The provider's confidence rides through onto the Detection (→ triage filter).
+    [det] = _suggest(("Dana", "person", 0.82)).detect("Dana hi")
+    assert det.score == 0.82
+
+
 # --- detector: thresholds + defensive span handling -------------------------
 def test_below_threshold_filtered():
     assert _suggest(("Dana", "person", 0.20), threshold=0.5).detect("Dana waved") == []

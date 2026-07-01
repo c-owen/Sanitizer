@@ -55,16 +55,19 @@ def _declared(*terms):
 
 class _StubSuggest:
     """A stand-in suggestion detector: flags fixed surfaces wherever they appear in
-    the text it is handed (a window), like the real model would."""
+    the text it is handed (a window), like the real model would. Each spec is
+    ``(surface, label, type[, score])`` — score defaults to 1.0."""
 
     tier = TrustTier.SUGGESTED
 
-    def __init__(self, *surfaces):  # each: (surface, label, type)
+    def __init__(self, *surfaces):
         self._surfaces = surfaces
 
     def detect(self, text):
         out = []
-        for surface, label, type_ in self._surfaces:
+        for spec in self._surfaces:
+            surface, label, type_ = spec[0], spec[1], spec[2]
+            score = spec[3] if len(spec) > 3 else 1.0
             index = text.find(surface)
             if index >= 0:
                 out.append(
@@ -77,6 +80,7 @@ class _StubSuggest:
                         reason="model suggestion",
                         canonical=surface.strip().casefold(),
                         restore=surface,
+                        score=score,
                     )
                 )
         return out
@@ -273,3 +277,70 @@ def test_suggest_items_drops_phantoms_not_in_any_single_segment():
         known_canonicals=set(),
     )
     assert items == []  # re-location fails → dropped (no invalid placement)
+
+
+def test_suggest_items_keeps_the_model_score():
+    from cloak_core.transcript import suggest_items
+
+    segments = sanitize_transcript(
+        [Seg(0, 1, "Sarah Chen spoke")], _declared("Zzz")
+    ).segments
+    items = suggest_items(
+        segments,
+        _StubSuggest(("Sarah Chen", "PERSON", "person", 0.73)),
+        known_canonicals=set(),
+    )
+    assert items[0].score == 0.73  # carried onto the review item for the triage filter
+
+
+def test_suggest_items_keeps_the_highest_score_across_windows():
+    from cloak_core.transcript import suggest_items
+
+    # window_chars=1 → one window per segment; the same surface, seen twice, keeps its
+    # most confident sighting (0.9), not whichever window happened to be first.
+    segments = sanitize_transcript(
+        [Seg(0, 1, "Sarah Chen here"), Seg(1, 2, "Sarah Chen again")], _declared("Zzz")
+    ).segments
+
+    class _Rising:
+        tier = TrustTier.SUGGESTED
+
+        def __init__(self):
+            self._calls = 0
+
+        def detect(self, text):
+            self._calls += 1
+            score = 0.4 if self._calls == 1 else 0.9
+            index = text.find("Sarah Chen")
+            if index < 0:
+                return []
+            return [
+                Detection(
+                    span=Span(index, index + 10),
+                    value="Sarah Chen",
+                    type="person",
+                    label="PERSON",
+                    tier=TrustTier.SUGGESTED,
+                    reason="model suggestion",
+                    canonical="sarah chen",
+                    restore="Sarah Chen",
+                    score=score,
+                )
+            ]
+
+    items = suggest_items(segments, _Rising(), known_canonicals=set(), window_chars=1)
+    assert len(items) == 1
+    assert items[0].score == 0.9
+    assert items[0].count == 2  # both sightings still re-located
+
+
+def test_item_json_round_trip_preserves_score():
+    from cloak_core.transcript import suggest_items
+
+    segments = sanitize_transcript([Seg(0, 1, "Sarah Chen")], _declared("Zzz")).segments
+    item = suggest_items(
+        segments,
+        _StubSuggest(("Sarah Chen", "PERSON", "person", 0.66)),
+        known_canonicals=set(),
+    )[0]
+    assert item_from_dict(item_to_dict(item)).score == 0.66

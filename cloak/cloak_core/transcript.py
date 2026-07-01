@@ -61,6 +61,9 @@ class ReviewItem:
     ``placeholder`` is empty while a suggestion is still PENDING (it is allocated
     on approval, Phase 5b). ``placements`` lists every occurrence; ``count`` is how
     many. ``state`` drives whether the item is applied to the scrubbed text.
+    ``score`` is the model's confidence in ``[0, 1]`` for a SUGGESTED item (the max
+    over its sightings) — the value the triage confidence filter sorts/filters on;
+    it is ``1.0`` for guaranteed (declared/PII) items, which are never score-gated.
     """
 
     canonical: str
@@ -72,6 +75,7 @@ class ReviewItem:
     reason: str
     state: DecisionState
     placements: list[Placement] = field(default_factory=list)
+    score: float = 1.0
 
     @property
     def count(self) -> int:
@@ -326,6 +330,18 @@ def build_manual_item(
 
 
 # --- on-demand model suggestions (windowed) ---------------------------------
+@dataclass
+class _Proposal:
+    """A model-proposed surface accumulated across windows (mutable ``score`` keeps
+    the highest confidence seen before the surface is re-located per segment)."""
+
+    surface: str
+    label: str
+    type: str
+    reason: str
+    score: float
+
+
 def _suggestion_windows(
     segments: Sequence[SanitizedSegment], window_chars: int
 ) -> list[str]:
@@ -381,39 +397,48 @@ def suggest_items(
     empty placeholder (allocated on approval, like any suggestion) — deduped against
     ``known_canonicals`` (declared/PII/existing suggestions) and against itself.
     Surfaces that don't actually occur in any segment (join phantoms) are dropped.
+    Each item keeps the model's **highest confidence** across its sightings, so the
+    review surface can filter/sort by it (the ~222-suggestions triage problem).
     """
-    proposals: dict[str, tuple[str, str, str, str]] = {}
+    proposals: dict[str, _Proposal] = {}
     order: list[str] = []
     for window in _suggestion_windows(segments, window_chars):
         for detection in detector.detect(window):
             canonical = detection.canonical
-            if canonical in known_canonicals or canonical in proposals:
+            if canonical in known_canonicals:
                 continue
-            proposals[canonical] = (
-                detection.restore or detection.value,
-                detection.label,
-                detection.type,
-                detection.reason,
+            existing = proposals.get(canonical)
+            if existing is not None:
+                # Same surface in another window — keep the most confident sighting.
+                existing.score = max(existing.score, detection.score)
+                continue
+            proposals[canonical] = _Proposal(
+                surface=detection.restore or detection.value,
+                label=detection.label,
+                type=detection.type,
+                reason=detection.reason,
+                score=detection.score,
             )
             order.append(canonical)
 
     items: list[ReviewItem] = []
     for canonical in order:
-        surface, label, type_, reason = proposals[canonical]
-        placements = _locate_placements(surface, segments)
+        proposal = proposals[canonical]
+        placements = _locate_placements(proposal.surface, segments)
         if not placements:
             continue
         items.append(
             ReviewItem(
                 canonical=canonical,
                 placeholder="",
-                original=surface,
-                label=label,
-                type=type_,
+                original=proposal.surface,
+                label=proposal.label,
+                type=proposal.type,
                 tier=TrustTier.SUGGESTED,
-                reason=reason,
+                reason=proposal.reason,
                 state=DecisionState.PENDING,
                 placements=placements,
+                score=proposal.score,
             )
         )
     return items
@@ -448,6 +473,7 @@ def item_to_dict(item: ReviewItem) -> dict:
         "tier": item.tier.name,
         "reason": item.reason,
         "state": item.state.value,
+        "score": item.score,
         "placements": [
             {"segment": p.segment, "start": p.start, "end": p.end}
             for p in item.placements
@@ -465,6 +491,7 @@ def item_from_dict(data: dict) -> ReviewItem:
         tier=TrustTier[data["tier"]],
         reason=data.get("reason", ""),
         state=DecisionState(data["state"]),
+        score=data.get("score", 1.0),
         placements=[
             Placement(p["segment"], p["start"], p["end"])
             for p in data.get("placements", [])
