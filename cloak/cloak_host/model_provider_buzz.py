@@ -47,6 +47,37 @@ _GLINER_PATTERNS = [
     "spm*",
 ]
 
+# GLiNER's multilingual weights are self-contained, but its config points the
+# *tokenizer* and *encoder config* at a base backbone (e.g. microsoft/mdeberta-v3-base)
+# that is NOT bundled in the gliner repo. We fetch those small files (config +
+# tokenizer) too — but never the base *weights* (gliner ships its own fine-tuned
+# encoder). Without them, loading reaches huggingface.co for the tokenizer → the
+# "couldn't connect ... couldn't find in cache" failure.
+_BASE_PATTERNS = [
+    "config.json",
+    "tokenizer*",
+    "*.model",
+    "spm*",
+    "sentencepiece*",
+    "special_tokens_map.json",
+    "added_tokens.json",
+    "vocab*",
+    "merges.txt",
+]
+
+
+def _base_model_name(gliner_dir: str) -> str | None:
+    """The backbone model named in the gliner repo's config (its tokenizer + encoder
+    config live there, not in the gliner repo). ``None`` if it can't be read."""
+    import json
+
+    try:
+        path = os.path.join(gliner_dir, "gliner_config.json")
+        with open(path, encoding="utf-8") as handle:
+            return json.load(handle).get("model_name") or None
+    except (OSError, ValueError):
+        return None
+
 
 def _ensure_vendor_on_path() -> None:
     """Put Cloak's bundled third-party dir on ``sys.path`` so the vendored GLiNER
@@ -104,9 +135,9 @@ class BuzzGlinerProvider:
         return entities
 
     def model_present(self) -> bool:
-        """True if the model is already cached (so the first call won't download)."""
+        """True if the GLiNER repo is already cached (first call won't download it)."""
         try:
-            self._snapshot_path(local_files_only=True)
+            self._cached(self._repo_id, _GLINER_PATTERNS)
         except Exception:  # noqa: BLE001 - any failure means "not available offline"
             return False
         return True
@@ -118,59 +149,75 @@ class BuzzGlinerProvider:
         return self._model
 
     def _load_model(self):
-        self._ensure_downloaded()
+        from buzz.model_loader import model_root_dir  # lazy host import
+
+        gliner_dir = self._ensure_downloaded()
         _ensure_vendor_on_path()  # make the bundled gliner importable (no pip)
-        # Load from the resolved *local snapshot directory*, not the repo id. GLiNER's
-        # from_pretrained skips ALL hub access when handed a path that exists (its
-        # _download_model does ``Path(model_id).exists()``), and reads the config,
-        # weights and *bundled* tokenizer straight from that dir. Passing the repo id
-        # instead reaches for huggingface.co even with local_files_only set — GLiNER's
-        # own offline handling is leaky (it re-resolves the backbone tokenizer online),
-        # which is the "couldn't connect to huggingface.co" failure users hit offline.
-        local_path = self._snapshot_path(local_files_only=True)
         from gliner import GLiNER  # lazy heavy import (vendored in cloak/_vendor)
 
+        # Load the gliner files from the local snapshot dir — an existing path makes
+        # GLiNER's _download_model skip all hub access for them — and let it pull the
+        # *base* tokenizer + encoder config from Buzz's cache (fetched in
+        # _ensure_downloaded) by threading cache_dir + local_files_only. Passing the
+        # repo id instead, or omitting these, makes GLiNER re-resolve the backbone
+        # online → the "couldn't connect to huggingface.co" failure.
         try:
-            model = GLiNER.from_pretrained(local_path, local_files_only=True)
-        except TypeError:
-            # Some GLiNER versions' from_pretrained doesn't accept local_files_only;
-            # the path is already local, so the load stays offline regardless.
-            model = GLiNER.from_pretrained(local_path)
+            model = GLiNER.from_pretrained(
+                gliner_dir, cache_dir=model_root_dir, local_files_only=True
+            )
+        except TypeError:  # older/newer GLiNER missing one of these kwargs
+            model = GLiNER.from_pretrained(gliner_dir, cache_dir=model_root_dir)
         try:
             model.to("cpu")
         except Exception:  # noqa: BLE001 - some builds manage device placement
             logger.debug("GLiNER.to('cpu') not applicable for this build")
         return model
 
-    def _ensure_downloaded(self) -> None:
-        # Already cached? Nothing to do — stays fully offline.
+    def _ensure_downloaded(self) -> str:
+        """Ensure the GLiNER repo **and** its base backbone's tokenizer/config are
+        cached; return the local GLiNER snapshot directory.
+
+        gliner_multi loads its tokenizer + encoder config from the base model named in
+        ``gliner_config.json`` (not bundled), so those are fetched too — but never the
+        base *weights* (the fine-tuned encoder weights ship in the gliner repo).
+        """
+        gliner_dir = self._ensure_repo(self._repo_id, _GLINER_PATTERNS)
+        base = _base_model_name(gliner_dir)
+        if base and base != self._repo_id:
+            try:
+                self._ensure_repo(base, _BASE_PATTERNS)
+            except Exception:  # noqa: BLE001 - best-effort; a real gap surfaces at load
+                logger.exception("Cloak: base backbone %s could not be fetched", base)
+        return gliner_dir
+
+    def _ensure_repo(self, repo_id: str, patterns: list[str]) -> str:
+        """Local snapshot dir for ``repo_id``, fetching via Buzz if not cached."""
         try:
-            self._snapshot_path(local_files_only=True)
-            return
+            return self._cached(repo_id, patterns)
         except Exception:  # noqa: BLE001 - not cached yet; fetch via Buzz below
             pass
 
         from buzz.model_loader import download_from_huggingface  # lazy host import
 
-        logger.info("Cloak: fetching suggestion model %s via Buzz", self._repo_id)
+        logger.info("Cloak: fetching %s via Buzz", repo_id)
         path = download_from_huggingface(
-            self._repo_id,
-            allow_patterns=_GLINER_PATTERNS,
-            progress=_NullProgress(),
+            repo_id, allow_patterns=patterns, progress=_NullProgress()
         )
         if not path:
             raise RuntimeError(
-                f"Cloak: failed to download suggestion model {self._repo_id!r} "
-                "via Buzz's downloader"
+                f"Cloak: failed to download {repo_id!r} via Buzz's downloader"
             )
+        return path
 
-    def _snapshot_path(self, *, local_files_only: bool) -> str:
+    def _cached(self, repo_id: str, patterns: list[str]) -> str:
+        """Local snapshot dir for ``repo_id`` if the ``patterns`` files are already
+        cached; raises otherwise (``local_files_only``)."""
         import huggingface_hub  # lazy
         from buzz.model_loader import model_root_dir  # lazy host import
 
         return huggingface_hub.snapshot_download(
-            self._repo_id,
-            allow_patterns=_GLINER_PATTERNS,
-            local_files_only=local_files_only,
+            repo_id,
+            allow_patterns=patterns,
+            local_files_only=True,
             cache_dir=model_root_dir,
         )
