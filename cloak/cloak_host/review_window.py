@@ -1,45 +1,48 @@
-"""Sidecar-backed review & restore window — Step A of the v2 UX build.
+"""Sidecar-backed review window — Step B of the v2 UX build.
 
-The home surface is the **decision list**, not a scrubbed-text blob: a two-zone
-``QTreeWidget`` —
+**One window, three modes** (a persistent safety spine spans all three):
 
-* **▣ REMOVED — guaranteed** (declared + PII together, provenance per row); these
-  are pre-approved, so they carry no per-row buttons (FR-8);
-* **◇ SUGGESTIONS** (model guesses, held): Approve/Reject buttons per row, never
-  auto-applied (FR-9);
-* **▸ Keeping in cleartext** (rejected items, struck through, collapsed): one-click
-  re-approve (UX-9).
+* **Review** — the home surface: a master-detail `QSplitter`. Left is the two-zone
+  decision **tree** (▣ REMOVED guaranteed · ◇ SUGGESTIONS held w/ Approve/Reject ·
+  ▸ Keeping-in-cleartext). Right is the **context / side-by-side** pane (UX-2): on
+  row selection it shows the original in context vs the substitution ("Is removing
+  *this* one correct?"), built from the item's ``placements``. In the empty case the
+  split is replaced by a "proof it ran" panel with scan evidence (US8).
+* **Send out** — one prominent *Copy scrubbed text* + a collapsed preview, then the
+  **fenced key** (the secret, PG8/UX-6). Unsafe → a blocking wall, no copyable text.
+* **Restore** — the mirror: paste reply → restore → result, with an **unresolved-tag
+  report** (`⚠ N still unresolved`, FR-7).
 
-A guaranteed row is rejected via a keyboard-accessible **Keep in cleartext** action
-(context menu + shortcut) — the full visible affordance arrives with the Step-B
-detail pane. A single **Approve everything detected** action approves the lot.
+Safety carries across all modes: the spine states the verdict in word+glyph (UX-5),
+and when ``meta["clean"]`` is false the scrubbed text is **withheld** from every
+selectable widget with no reachable copy path (PG7/US9). Edits re-derive scrubbed +
+key (``apply_review``) and persist. The stored Buzz transcript is never touched.
 
-Safety: a persistent **spine** shows the verdict in word + glyph, never colour alone
-(UX-5). When ``meta["clean"]`` is false the scrubbed text is **withheld** — never
-rendered into any selectable/copyable widget — and a loud blocking wall replaces it;
-copy is a hard no-op (PG7/US9). The **key** is fenced as the secret and copying it
-warns (PG8/UX-6). Edits re-derive scrubbed + key (``apply_review``) and persist to
-the sidecar. The stored Buzz transcript is never touched.
-
-Deferred to Step B/C: mode tabs (Send out / Restore split out), master-detail
-context pane, the miss-catching strip, the empty-state "proof it ran" panel.
+Deferred to Step C/D: the reverse "not touched — confirm these" miss-catching strip
+and select-to-redact (FR-16/FR-22), the bulk filter, informed auto-apply, first-use
+teaching, in-window declared-list management.
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import re
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QAction, QFontDatabase, QKeySequence
 from PyQt6.QtWidgets import (
     QApplication,
+    QButtonGroup,
     QComboBox,
-    QGroupBox,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QPlainTextEdit,
     QPushButton,
+    QSplitter,
+    QStackedWidget,
+    QToolButton,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -60,9 +63,11 @@ logger = logging.getLogger(__name__)
 
 _GUARANTEED = (TrustTier.DECLARED, TrustTier.PII)
 _USER_ROLE = Qt.ItemDataRole.UserRole
+_PLACEHOLDER_RE = re.compile(r"\{\{[^{}]+\}\}")
+_MODE_INDEX = {"review": 0, "sendout": 1, "restore": 2}
 
-# Minimal, grayscale-first accents (from the design tokens). Meaning is carried by
-# words + glyphs + grouping; colour only reinforces (UX-5).
+# Minimal, grayscale-first accents (design tokens). Meaning is carried by words +
+# glyphs + grouping; colour only reinforces (UX-5).
 _SAFE = "background:#e9f1ea; color:#2f6b3d; padding:8px; border-left:7px solid #2f6b3d;"
 _EMPTY = (
     "background:#eaf0f2; color:#4a6b7a; padding:8px; border-left:7px solid #4a6b7a;"
@@ -72,15 +77,18 @@ _UNSAFE = (
     "border:2px solid #b3261e; font-weight:bold;"
 )
 _WALL = (
-    "background:#2a1414; color:#ffe6e1; padding:20px; "
+    "background:#2a1414; color:#ffe6e1; padding:18px; "
     "border:2px solid #b3261e; font-weight:bold;"
 )
 _KEY_HEADER = "background:#2a1414; color:#ffe6e1; padding:8px; font-weight:bold;"
 _TOAST = "background:#26241f; color:#f4f2ee; padding:8px 14px; border:1px solid #000;"
+_HL_ORIG = "QPlainTextEdit { background:#f3d9d4; }"
+_HL_SUB = "QPlainTextEdit { background:#dfe9df; }"
+_EVIDENCE = "background:#fbfbfa; border:1px solid #b9b6b1; padding:8px;"
 
 
 class ReviewWindow(QWidget):
-    """Presents and edits one transcription's sidecar: decisions, scrubbed, key.
+    """Presents and edits one transcription's sidecar across Review/Send/Restore.
 
     ``base_dir`` defaults to Cloak's real data directory; tests inject a temp dir.
     """
@@ -89,7 +97,7 @@ class ReviewWindow(QWidget):
         super().__init__(parent, Qt.WindowType.Window)
         self.setObjectName("cloak_review_window")
         self.setWindowTitle(_("Cloak — Review & restore"))
-        self.resize(880, 860)
+        self.resize(940, 780)
 
         if base_dir is None:
             try:
@@ -102,17 +110,17 @@ class ReviewWindow(QWidget):
         self._base_dir = base_dir
         self._sidecar = None
         self._current_dir = ""
+        self._scrubbed_text = ""
         self._key_text = ""
         self._clean = True
+        self._mode = "review"
         self._last_toast = ""
         self._toast_label: QLabel | None = None
         self._suggestion_buttons: dict[str, tuple[QPushButton, QPushButton]] = {}
         self._reapprove_buttons: dict[str, QPushButton] = {}
         self._mono = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
 
-        # Keyboard-accessible reject for guaranteed rows (no per-row button; the
-        # visible affordance arrives with the Step-B detail pane). Surfaced in the
-        # tree's context menu AND bound to a shortcut — never mouse-only.
+        # Keyboard-accessible reject for guaranteed rows (context menu + shortcut).
         self._keep_action = QAction(_("Keep in cleartext"), self)
         self._keep_action.setShortcut(QKeySequence("Ctrl+K"))
         self._keep_action.triggered.connect(self._keep_selected_in_cleartext)
@@ -129,101 +137,40 @@ class ReviewWindow(QWidget):
         selector_row.addWidget(self._refresh_button)
         layout.addLayout(selector_row)
 
-        # Safety spine — the verdict, always visible, word + glyph (UX-5 / PG7).
         self._spine_label = QLabel()
         self._spine_label.setWordWrap(True)
         layout.addWidget(self._spine_label)
 
-        # Decisions — the home surface (UX-1). Gets the vertical stretch.
-        decisions_box = QGroupBox(_("Decisions — what Cloak will remove"))
-        decisions_layout = QVBoxLayout(decisions_box)
-        bulk_row = QHBoxLayout()
-        self._approve_all_button = QPushButton(_("Approve everything detected"))
-        self._approve_all_button.clicked.connect(self._approve_everything)
-        bulk_row.addWidget(self._approve_all_button)
-        bulk_row.addStretch(1)
-        decisions_layout.addLayout(bulk_row)
+        # Mode tabs — one window, three modes.
+        tab_row = QHBoxLayout()
+        tab_row.setSpacing(4)
+        self._tab_buttons: dict[str, QToolButton] = {}
+        self._tab_group = QButtonGroup(self)
+        for mode, label in (
+            ("review", _("Review")),
+            ("sendout", _("Send out")),
+            ("restore", _("Restore")),
+        ):
+            button = QToolButton()
+            button.setText(label)
+            button.setCheckable(True)
+            button.clicked.connect(lambda _c=False, m=mode: self.set_mode(m))
+            self._tab_group.addButton(button)
+            self._tab_buttons[mode] = button
+            tab_row.addWidget(button)
+        tab_row.addStretch(1)
+        layout.addLayout(tab_row)
 
-        self._tree = QTreeWidget()
-        self._tree.setColumnCount(4)
-        self._tree.setHeaderLabels([_("item"), _("was"), _("×"), _("provenance")])
-        self._tree.setRootIsDecorated(True)
-        self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.ActionsContextMenu)
-        self._tree.addAction(self._keep_action)
-        self._tree.itemSelectionChanged.connect(self._update_row_actions)
-        decisions_layout.addWidget(self._tree, 1)
-        layout.addWidget(decisions_box, 1)
+        self._stack = QStackedWidget()
+        self._stack.addWidget(self._build_review_page())  # 0
+        self._stack.addWidget(self._build_sendout_page())  # 1
+        self._stack.addWidget(self._build_restore_page())  # 2
+        layout.addWidget(self._stack, 1)
 
-        # Scrubbed transcript (safe only) OR the withholding wall (unsafe).
-        self._scrubbed_group = QGroupBox(
-            _("Scrubbed transcript (safe to paste into an LLM)")
-        )
-        scrubbed_layout = QVBoxLayout(self._scrubbed_group)
-        self._scrubbed_edit = self._read_only(110)
-        scrubbed_layout.addWidget(self._scrubbed_edit)
-        self._copy_button = QPushButton(_("📋  Copy scrubbed text"))
-        self._copy_button.clicked.connect(self._copy_scrubbed)
-        scrubbed_layout.addWidget(self._copy_button)
-        layout.addWidget(self._scrubbed_group)
-
-        self._unsafe_wall = QLabel(
-            _(
-                "⛔  OUTPUT WITHHELD\n\nA declared item could not be confirmed "
-                "removed. No scrubbed text is produced until this is resolved."
-            )
-        )
-        self._unsafe_wall.setWordWrap(True)
-        self._unsafe_wall.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._unsafe_wall.setStyleSheet(_WALL)
-        self._unsafe_wall.setVisible(False)
-        layout.addWidget(self._unsafe_wall)
-
-        # The key — fenced as the secret (PG8 / UX-6).
-        key_box = QGroupBox(_("The key"))
-        key_layout = QVBoxLayout(key_box)
-        key_header = QLabel(
-            _("🔒  THE KEY — this is the secret.  Never paste this into an LLM.")
-        )
-        key_header.setWordWrap(True)
-        key_header.setStyleSheet(_KEY_HEADER)
-        key_layout.addWidget(key_header)
-        key_layout.addWidget(
-            QLabel(
-                _(
-                    "The key maps placeholders back to real values. You only need "
-                    "it to restore a reply."
-                )
-            )
-        )
-        self._reveal_button = QPushButton(_("Reveal key"))
-        self._reveal_button.setCheckable(True)
-        self._reveal_button.toggled.connect(self._on_reveal_toggled)
-        key_layout.addWidget(self._reveal_button, 0, Qt.AlignmentFlag.AlignLeft)
-        self._key_edit = self._read_only(90)
-        self._key_edit.setVisible(False)
-        key_layout.addWidget(self._key_edit)
-        self._copy_key_button = QPushButton(_("⚠  Copy the secret key"))
-        self._copy_key_button.setVisible(False)
-        self._copy_key_button.clicked.connect(self._copy_key)
-        key_layout.addWidget(self._copy_key_button, 0, Qt.AlignmentFlag.AlignLeft)
-        layout.addWidget(key_box)
-
-        # Restore (unchanged from Phase 5).
-        restore_box = QGroupBox(_("Restore a returned reply"))
-        restore_layout = QVBoxLayout(restore_box)
-        restore_layout.addWidget(QLabel(_("Paste the LLM's reply (markdown is fine):")))
-        self._returned_edit = QPlainTextEdit()
-        self._returned_edit.setFixedHeight(70)
-        restore_layout.addWidget(self._returned_edit)
-        self._restore_button = QPushButton(_("Restore originals"))
-        self._restore_button.clicked.connect(self._on_restore)
-        restore_layout.addWidget(self._restore_button)
-        self._restored_edit = self._read_only(70)
-        restore_layout.addWidget(self._restored_edit)
-        layout.addWidget(restore_box)
-
+        self.set_mode("review")
         self.reload()
 
+    # --- construction helpers ----------------------------------------------
     @staticmethod
     def _read_only(height: int | None = None) -> QPlainTextEdit:
         edit = QPlainTextEdit()
@@ -231,6 +178,233 @@ class ReviewWindow(QWidget):
         if height:
             edit.setFixedHeight(height)
         return edit
+
+    @staticmethod
+    def _hline() -> QFrame:
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setStyleSheet("color:#b9b6b1;")
+        return line
+
+    def _build_review_page(self) -> QWidget:
+        page = QWidget()
+        v = QVBoxLayout(page)
+
+        self._review_block = QLabel(
+            _(
+                "⛔  OUTPUT WITHHELD.  A declared item could not be confirmed "
+                "removed (see the tree). No scrubbed text is produced until this "
+                "is resolved."
+            )
+        )
+        self._review_block.setWordWrap(True)
+        self._review_block.setStyleSheet(_UNSAFE)
+        self._review_block.setVisible(False)
+        v.addWidget(self._review_block)
+
+        bulk_row = QHBoxLayout()
+        self._approve_all_button = QPushButton(_("Approve everything detected"))
+        self._approve_all_button.clicked.connect(self._approve_everything)
+        bulk_row.addWidget(self._approve_all_button)
+        bulk_row.addStretch(1)
+        v.addLayout(bulk_row)
+
+        self._review_body = QStackedWidget()
+        self._review_body.addWidget(self._build_review_normal())  # 0
+        self._review_body.addWidget(self._build_review_empty())  # 1
+        v.addWidget(self._review_body, 1)
+        return page
+
+    def _build_review_normal(self) -> QWidget:
+        split = QSplitter(Qt.Orientation.Horizontal)
+
+        left = QWidget()
+        left_layout = QVBoxLayout(left)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        self._tree = QTreeWidget()
+        self._tree.setColumnCount(4)
+        self._tree.setHeaderLabels([_("item"), _("was"), _("×"), _("provenance")])
+        self._tree.setRootIsDecorated(True)
+        self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.ActionsContextMenu)
+        self._tree.addAction(self._keep_action)
+        self._tree.itemSelectionChanged.connect(self._on_selection_changed)
+        left_layout.addWidget(self._tree, 1)
+        split.addWidget(left)
+
+        split.addWidget(self._build_context_pane())
+        split.setSizes([560, 360])
+        return split
+
+    def _build_context_pane(self) -> QWidget:
+        pane = QWidget()
+        v = QVBoxLayout(pane)
+
+        self._ctx_body = QWidget()
+        body = QVBoxLayout(self._ctx_body)
+        body.setContentsMargins(0, 0, 0, 0)
+        self._ctx_meta = QLabel()
+        self._ctx_meta.setWordWrap(True)
+        body.addWidget(self._ctx_meta)
+        self._ctx_prompt = QLabel()
+        body.addWidget(self._ctx_prompt)
+        body.addWidget(QLabel(_("ORIGINAL")))
+        self._ctx_orig = self._read_only(70)
+        self._ctx_orig.setStyleSheet(_HL_ORIG)
+        body.addWidget(self._ctx_orig)
+        self._ctx_after_label = QLabel(_("AFTER SUBSTITUTION"))
+        body.addWidget(self._ctx_after_label)
+        self._ctx_sub = self._read_only(70)
+        self._ctx_sub.setStyleSheet(_HL_SUB)
+        body.addWidget(self._ctx_sub)
+        body.addStretch(1)
+        v.addWidget(self._ctx_body)
+
+        self._ctx_withheld = QLabel(
+            _(
+                "CONTEXT WITHHELD\nNo substitution preview while a declared item "
+                "is unconfirmed."
+            )
+        )
+        self._ctx_withheld.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._ctx_withheld.setWordWrap(True)
+        self._ctx_withheld.setStyleSheet("color:#6b6864;")
+        self._ctx_withheld.setVisible(False)
+        v.addWidget(self._ctx_withheld)
+        v.addStretch(1)
+        return pane
+
+    def _build_review_empty(self) -> QWidget:
+        page = QWidget()
+        v = QVBoxLayout(page)
+        v.addStretch(1)
+        glyph = QLabel("✔")
+        glyph.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        glyph.setStyleSheet("font-size:40px; color:#4a6b7a;")
+        v.addWidget(glyph)
+        title = QLabel(_("Nothing sensitive found"))
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setStyleSheet("font-size:17px;")
+        v.addWidget(title)
+        sub = QLabel(_("This is a result, not a skip"))
+        sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        sub.setStyleSheet("color:#6b6864;")
+        v.addWidget(sub)
+        self._empty_evidence = QLabel()
+        self._empty_evidence.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty_evidence.setStyleSheet(_EVIDENCE)
+        v.addWidget(self._empty_evidence)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        self._empty_copy_button = QPushButton(_("Copy the transcript"))
+        self._empty_copy_button.clicked.connect(self._copy_scrubbed)
+        row.addWidget(self._empty_copy_button)
+        row.addStretch(1)
+        v.addLayout(row)
+        v.addStretch(2)
+        return page
+
+    def _build_sendout_page(self) -> QWidget:
+        page = QWidget()
+        v = QVBoxLayout(page)
+        v.setContentsMargins(40, 18, 40, 18)
+
+        self._sendout_safe = QWidget()
+        safe = QVBoxLayout(self._sendout_safe)
+        self._copy_button = QPushButton(_("📋  Copy scrubbed text"))
+        self._copy_button.setMinimumHeight(44)
+        font = self._copy_button.font()
+        font.setBold(True)
+        self._copy_button.setFont(font)
+        self._copy_button.clicked.connect(self._copy_scrubbed)
+        safe.addWidget(self._copy_button)
+        caption = QLabel(_("This is the safe thing to paste into your LLM."))
+        caption.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        caption.setStyleSheet("color:#6b6864;")
+        safe.addWidget(caption)
+
+        self._preview_toggle = QToolButton()
+        self._preview_toggle.setText(_("▸ Preview scrubbed text"))
+        self._preview_toggle.setCheckable(True)
+        self._preview_toggle.setStyleSheet("border:none;")
+        self._preview_toggle.toggled.connect(self._on_preview_toggled)
+        safe.addWidget(self._preview_toggle, 0, Qt.AlignmentFlag.AlignLeft)
+        self._preview_edit = self._read_only(120)
+        self._preview_edit.setVisible(False)
+        safe.addWidget(self._preview_edit)
+        safe.addWidget(self._hline())
+
+        key_box = QFrame()
+        key_box.setStyleSheet("QFrame { border:1px solid #6f6b65; }")
+        key = QVBoxLayout(key_box)
+        key.setContentsMargins(0, 0, 0, 0)
+        key_header = QLabel(
+            _("🔒  THE KEY — this is the secret.  Never paste this into an LLM.")
+        )
+        key_header.setWordWrap(True)
+        key_header.setStyleSheet(_KEY_HEADER)
+        key.addWidget(key_header)
+        key.addWidget(
+            QLabel(
+                _(
+                    "The key maps placeholders back to real values. You only need "
+                    "it to restore a reply."
+                )
+            )
+        )
+        self._reveal_button = QPushButton(_("Reveal the key"))
+        self._reveal_button.setCheckable(True)
+        self._reveal_button.toggled.connect(self._on_reveal_toggled)
+        key.addWidget(self._reveal_button, 0, Qt.AlignmentFlag.AlignLeft)
+        self._key_edit = self._read_only(90)
+        self._key_edit.setVisible(False)
+        key.addWidget(self._key_edit)
+        self._copy_key_button = QPushButton(_("⚠  Copy the secret key"))
+        self._copy_key_button.setVisible(False)
+        self._copy_key_button.clicked.connect(self._copy_key)
+        key.addWidget(self._copy_key_button, 0, Qt.AlignmentFlag.AlignLeft)
+        safe.addWidget(key_box)
+        safe.addStretch(1)
+        v.addWidget(self._sendout_safe)
+
+        self._sendout_wall = QLabel(
+            _(
+                "⛔  BLOCKED — UNSAFE\n\nCloak could not confirm your declared items "
+                "were removed.\nThere is no scrubbed text to copy until this is "
+                "resolved."
+            )
+        )
+        self._sendout_wall.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._sendout_wall.setWordWrap(True)
+        self._sendout_wall.setStyleSheet(_WALL)
+        self._sendout_wall.setVisible(False)
+        v.addWidget(self._sendout_wall)
+        v.addStretch(1)
+        return page
+
+    def _build_restore_page(self) -> QWidget:
+        page = QWidget()
+        v = QVBoxLayout(page)
+        v.setContentsMargins(40, 18, 40, 18)
+        v.addWidget(QLabel(_("Paste the LLM's reply (markdown is fine):")))
+        self._returned_edit = QPlainTextEdit()
+        self._returned_edit.setFixedHeight(90)
+        v.addWidget(self._returned_edit)
+        self._restore_button = QPushButton(_("Restore originals"))
+        self._restore_button.clicked.connect(self._on_restore)
+        v.addWidget(self._restore_button, 0, Qt.AlignmentFlag.AlignLeft)
+        v.addWidget(QLabel(_("Restored (placeholders filled back from the key):")))
+        self._restored_edit = self._read_only(90)
+        v.addWidget(self._restored_edit)
+        self._restore_report = QLabel()
+        v.addWidget(self._restore_report)
+        v.addStretch(1)
+        return page
+
+    def set_mode(self, mode: str) -> None:
+        self._mode = mode
+        self._stack.setCurrentIndex(_MODE_INDEX[mode])
+        for name, button in self._tab_buttons.items():
+            button.setChecked(name == mode)
 
     # --- loading ------------------------------------------------------------
     def reload(self) -> None:
@@ -265,14 +439,18 @@ class ReviewWindow(QWidget):
     def _show_empty(self) -> None:
         self._sidecar = None
         self._current_dir = ""
+        self._scrubbed_text = ""
         self._key_text = ""
         self._clean = True
         self._populate_tree([])
-        self._scrubbed_edit.setPlainText("")
-        self._scrubbed_group.setVisible(True)
+        self._review_body.setCurrentIndex(0)
+        self._review_block.setVisible(False)
+        self._sendout_safe.setVisible(True)
+        self._sendout_wall.setVisible(False)
+        self._preview_edit.setPlainText("")
         self._copy_button.setEnabled(False)
-        self._unsafe_wall.setVisible(False)
         self._key_edit.setPlainText("")
+        self._reset_context()
         self._spine_label.setText(
             _("No sanitized transcripts yet. Transcribe with Cloak enabled.")
         )
@@ -280,28 +458,30 @@ class ReviewWindow(QWidget):
 
     # --- rendering ----------------------------------------------------------
     def _refresh_after_edit(self) -> None:
-        """Re-render every pane from the current sidecar state."""
+        """Re-render every mode from the current sidecar state."""
         sidecar = self._sidecar
         if sidecar is None:
             return
         clean = bool(sidecar.meta.get("clean", True))
         self._clean = clean
+        self._scrubbed_text = sidecar.scrubbed_text if clean else ""
 
         self._populate_tree(sidecar.items)
         self._update_spine(sidecar, clean)
 
-        if clean:
-            self._unsafe_wall.setVisible(False)
-            self._scrubbed_group.setVisible(True)
-            self._scrubbed_edit.setPlainText(sidecar.scrubbed_text)
-            self._copy_button.setEnabled(True)
-        else:
-            # WITHHOLD (PG7): the scrubbed text must not reach any selectable
-            # widget, and there must be no reachable copy path (see _copy_scrubbed).
-            self._scrubbed_edit.setPlainText("")
-            self._scrubbed_group.setVisible(False)
-            self._copy_button.setEnabled(False)
-            self._unsafe_wall.setVisible(True)
+        is_empty = clean and not sidecar.items
+        self._review_body.setCurrentIndex(1 if is_empty else 0)
+        self._review_block.setVisible(not clean)
+        if is_empty:
+            self._empty_evidence.setText(self._scan_evidence(sidecar.meta))
+        self._reset_context()
+
+        # Send out — safe copy area vs the blocking wall (PG7: withhold when unsafe).
+        self._sendout_safe.setVisible(clean)
+        self._sendout_wall.setVisible(not clean)
+        self._preview_edit.setPlainText(self._scrubbed_text if clean else "")
+        self._copy_button.setEnabled(clean and bool(self._scrubbed_text))
+        self._empty_copy_button.setEnabled(clean and bool(self._scrubbed_text))
 
         self._key_text = "\n".join(
             f"{placeholder}  =  {original}"
@@ -334,6 +514,16 @@ class ReviewWindow(QWidget):
                 ).format(removed=removed, pending=pending)
             )
             self._spine_label.setStyleSheet(_SAFE)
+
+    @staticmethod
+    def _scan_evidence(meta) -> str:
+        return _(
+            "Scanned {detectors} detectors across {segments} segments · 0 matches "
+            "· key not needed"
+        ).format(
+            detectors=meta.get("detector_count", "?"),
+            segments=meta.get("segment_count", "?"),
+        )
 
     def _populate_tree(self, items) -> None:
         self._tree.clear()
@@ -450,10 +640,81 @@ class ReviewWindow(QWidget):
     def _apply_tree_widths(self) -> None:
         header = self._tree.header()
         header.setStretchLastSection(True)
-        header.setDefaultSectionSize(138)
-        header.resizeSection(0, 190)
-        header.resizeSection(1, 150)
-        header.resizeSection(2, 44)
+        header.setDefaultSectionSize(128)
+        header.resizeSection(0, 168)
+        header.resizeSection(1, 132)
+        header.resizeSection(2, 40)
+
+    # --- context / side-by-side (UX-2) --------------------------------------
+    def _on_selection_changed(self) -> None:
+        self._update_row_actions()
+        if not self._clean:
+            return  # context stays withheld while unsafe
+        item = self._selected_review_item()
+        if item is None:
+            self._reset_context()
+        else:
+            self._populate_context(item)
+
+    def _reset_context(self) -> None:
+        if not self._clean:
+            self._ctx_body.setVisible(False)
+            self._ctx_withheld.setVisible(True)
+            return
+        self._ctx_withheld.setVisible(False)
+        self._ctx_body.setVisible(True)
+        self._ctx_meta.setText(_("Select a decision to see it in context."))
+        self._ctx_prompt.setText("")
+        self._ctx_orig.setPlainText("")
+        self._ctx_sub.setPlainText("")
+
+    def _populate_context(self, item) -> None:
+        self._ctx_withheld.setVisible(False)
+        self._ctx_body.setVisible(True)
+        placeholder = item.placeholder or self._proposed_placeholder(item)
+        self._ctx_meta.setText(
+            _(
+                "{value} · {kind} · provenance: {prov} · {ph} · "
+                "{count} occurrence(s)\nWhy flagged: {why}"
+            ).format(
+                value=item.original,
+                kind=item.type,
+                prov=self._provenance(item),
+                ph=placeholder,
+                count=item.count,
+                why=item.reason,
+            )
+        )
+        self._ctx_prompt.setText(_("Is removing this one correct?"))
+        original, after = self._context_window(item, placeholder)
+        self._ctx_orig.setPlainText(original)
+        self._ctx_sub.setPlainText(after)
+        pending_suggestion = (
+            item.tier == TrustTier.SUGGESTED and item.state != DecisionState.APPROVED
+        )
+        self._ctx_after_label.setText(
+            _("IF APPROVED") if pending_suggestion else _("AFTER SUBSTITUTION")
+        )
+
+    def _proposed_placeholder(self, item) -> str:
+        existing = {i.placeholder for i in self._sidecar.items if i.placeholder}
+        return next_free_placeholder(existing, item.label)
+
+    def _context_window(self, item, placeholder: str) -> tuple[str, str]:
+        segments = self._sidecar.segments
+        placements = [p for p in item.placements if 0 <= p.segment < len(segments)]
+        if not placements:
+            return item.original, placeholder
+        placement = placements[0]
+        text = segments[placement.segment].original
+        start, end = placement.start, placement.end
+        lo, hi = max(0, start - 30), min(len(text), end + 30)
+        prefix = ("…" if lo > 0 else "") + text[lo:start]
+        suffix = text[end:hi] + ("…" if hi < len(text) else "")
+        return (
+            f"{prefix}«{text[start:end]}»{suffix}",
+            f"{prefix}«{placeholder}»{suffix}",
+        )
 
     # --- editing ------------------------------------------------------------
     def _approve_item(self, item) -> None:
@@ -525,29 +786,42 @@ class ReviewWindow(QWidget):
         except OSError:
             logger.exception("Cloak: failed to persist review edits.")
 
-    # --- key / restore / clipboard ------------------------------------------
+    # --- send out / key / restore / clipboard -------------------------------
+    def _on_preview_toggled(self, checked: bool) -> None:
+        self._preview_edit.setVisible(checked)
+        self._preview_toggle.setText(
+            _("▾ Hide preview") if checked else _("▸ Preview scrubbed text")
+        )
+
     def _on_reveal_toggled(self, checked: bool) -> None:
         self._key_edit.setVisible(checked)
         self._copy_key_button.setVisible(checked)
-        self._reveal_button.setText(_("Hide key") if checked else _("Reveal key"))
+        self._reveal_button.setText(_("Hide key") if checked else _("Reveal the key"))
         if checked:
             self._key_edit.setPlainText(self._key_text or _("(empty)"))
 
     def _on_restore(self) -> None:
         if self._sidecar is None:
             return
-        restored = restore(self._returned_edit.toPlainText(), self._sidecar.key)
+        returned = self._returned_edit.toPlainText()
+        restored = restore(returned, self._sidecar.key)
         self._restored_edit.setPlainText(restored)
+        filled = sum(1 for ph in self._sidecar.key.entries if ph in returned)
+        unresolved = len(_PLACEHOLDER_RE.findall(restored))
+        report = _("{n} placeholder(s) filled").format(n=filled)
+        if unresolved:
+            report += _("  ·  ⚠ {n} still unresolved in the text").format(n=unresolved)
+        self._restore_report.setText(report)
+        self._restore_report.setStyleSheet(
+            "color:#b3261e;" if unresolved else "color:#2f6b3d;"
+        )
 
     def _copy_scrubbed(self) -> None:
         # PG7: while unsafe there is NO reachable copy path — the handler refuses
         # even if invoked directly, and the text isn't in a widget to begin with.
-        if not self._clean:
+        if not self._clean or not self._scrubbed_text:
             return
-        text = self._scrubbed_edit.toPlainText()
-        if not text:
-            return
-        self._to_clipboard(text)
+        self._to_clipboard(self._scrubbed_text)
         self._toast(_("✔  Scrubbed text copied — safe to paste"))
 
     def _copy_key(self) -> None:
@@ -565,7 +839,6 @@ class ReviewWindow(QWidget):
         if clipboard is not None:
             clipboard.setText(text)
 
-    # --- toast --------------------------------------------------------------
     def _toast(self, message: str) -> None:
         self._last_toast = message
         if self._toast_label is None:

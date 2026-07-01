@@ -21,18 +21,22 @@
 | **5a — Pipeline + sidecar + review/restore window** | ✅ **done** (2026-06-30) | `on_complete` → per-segment sanitize → sidecar (PG5/PG8); config fields; sidecar-backed Review & restore window. |
 | **5b — Interactive decision UX (core)** | ✅ **done** (2026-06-30) | Approve/reject + live re-derive + persist; bulk; rejected-visible; placeholder-on-approval. Lens (FR-22) + informed auto-apply (FR-12) + GUI polish deferred. |
 | **UX build — Step A (v2 review restructure)** | ✅ **done** (2026-06-30) | Two-zone decision **tree** (Removed / Suggestions / Keeping-in-cleartext); loud unsafe **withholds** scrubbed (PG7 tested); key fenced + copy toast (UX-6); demo/About dropped from menu. |
-| 6 — Guarantee hardening + offline proof + DoD | ⬜ planned | UX Steps B–D interleave (see the UX build brief). |
+| **UX build — Step B (modes + master-detail)** | ✅ **done** (2026-06-30) — on branch `step-b-modes-context` | Three **modes** (Review / Send out / Restore); Review is a **master-detail** split with a **side-by-side context pane** from `placements` (UX-2); restore **unresolved-tag report** (FR-7); empty-state **scan evidence** (US8). |
+| 6 — Guarantee hardening + offline proof + DoD | ⬜ planned | UX Steps C–D interleave (see the UX build brief). |
 
 **Current state at a glance:** `cloak_core` **v0.5.0** · **193 tests pass** on system
-Python, **219** in `.venv-qt` (PyQt6 + hypothesis + markdown) · `ruff` clean.
-The **host integration (Phase 5) is live and interactive**, and the review window is
-now being rebuilt against the approved **v2 design** (design docs under `design/`;
-task brief `cloak-implementation-brief-for-claude-code.md`). **Step A** landed: the
-home surface is a two-zone **decision tree** (▣ REMOVED guaranteed · ◇ SUGGESTIONS with
-Approve/Reject · ▸ Keeping-in-cleartext), a **safety spine** (verdict in word+glyph,
-UX-5), and the **unsafe state withholds** the scrubbed text from every copy path (PG7,
-tested) behind a blocking wall. `cloak_core` stays pure. Next: §8 (UX Step B — mode
-tabs + master-detail context pane; then C/D + Phase 6).
+Python, **224** in `.venv-qt` (PyQt6 + hypothesis + markdown) · `ruff` clean.
+The review window is being rebuilt against the approved **v2 design** (docs under
+`design/`; task brief `cloak-implementation-brief-for-claude-code.md`). **Steps A+B**
+landed: one window, **three modes** (Review / Send out / Restore) under a persistent
+**safety spine** (verdict in word+glyph, UX-5). Review is the home surface — a two-zone
+**decision tree** (▣ REMOVED · ◇ SUGGESTIONS Approve/Reject · ▸ Keeping-in-cleartext) in
+a **master-detail** split with a **side-by-side context pane** (ORIGINAL vs AFTER, from
+`placements`). Send out = one Copy + fenced key; Restore = mirror + **unresolved-tag
+report**; empty = **scan evidence**. **Unsafe withholds** the scrubbed text from every
+copy path in every mode (PG7, tested). `cloak_core` stays pure. Next: **UX Step C** —
+the reverse "not touched — confirm these" miss-catching strip + select-to-redact
+(FR-16/FR-22), then D + Phase 6.
 
 **What Phase 0 delivered & verified:**
 - A loadable `BuzzPlugin` (`id="cloak"`, `version="0.0.0"`, no pip deps).

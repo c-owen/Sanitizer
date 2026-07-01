@@ -1,9 +1,10 @@
-"""ReviewWindow (Step A v2 UX) — two-zone tree, withheld-unsafe, key, restore.
+"""ReviewWindow (v2 UX, Step B) — modes, master-detail context, withheld-unsafe.
 
 Requires PyQt6 + pytest-qt (skips elsewhere). Drives the window against a sidecar
-written by the pure core into a temp dir — no Buzz, no real cache. Includes the
-PG7 guarantee (unsafe → scrubbed text is unreachable to any copy path) and the
-UX-5 guarantee (tier/state readable without colour).
+written by the pure core into a temp dir — no Buzz, no real cache. Keeps the PG7
+guarantee (unsafe → no reachable copy path in any mode) and UX-5 (readable without
+colour), and adds Step-B coverage: the three modes, the side-by-side context pane,
+the empty-state scan evidence, and the restore unresolved-tag report.
 """
 
 from __future__ import annotations
@@ -39,8 +40,6 @@ class Seg:
 
 
 class _StubProvider:
-    """Locates a fixed surface in the text → a RawEntity (a fake model)."""
-
     def __init__(self, surface, label):
         self._surface = surface
         self._label = label
@@ -52,12 +51,15 @@ class _StubProvider:
         return [RawEntity(index, index + len(self._surface), self._label, 0.9)]
 
 
-def _meta(sanitization, clean=True):
-    return {
+def _meta(sanitization, clean=True, **extra):
+    meta = {
         "clean": clean,
         "removed_items": sanitization.removed_items,
         "pending_items": sanitization.pending_items,
+        "segment_count": len(sanitization.segments),
     }
+    meta.update(extra)
+    return meta
 
 
 def _write_sidecar(directory):
@@ -70,7 +72,6 @@ def _write_sidecar(directory):
 
 
 def _write_with_suggestion(directory):
-    # "Jane" declared (approved) + "Acme" suggested (pending).
     detectors = [
         DeclaredListDetector(["Jane"]),
         ModelSuggestionDetector(_StubProvider("Acme", "organization")),
@@ -88,6 +89,17 @@ def _write_unsafe(directory):
         directory / "7", sanitization, _meta(sanitization, clean=False)
     )
     return sanitization  # scrubbed_text == "Ring {{TERM-1}} and Bob"
+
+
+def _write_empty(directory):
+    # A transcript where nothing matched → the "nothing found" result (US8).
+    sanitization = sanitize_transcript(
+        [Seg(0, 1, "hello world")], [DeclaredListDetector(["Zzz"])]
+    )
+    persistence.write_sidecar(
+        directory / "3", sanitization, _meta(sanitization, detector_count=7)
+    )
+    return sanitization
 
 
 def _new_window(tmp_path, qtbot):
@@ -109,7 +121,7 @@ def _selectable_texts(window):
     return out
 
 
-# --- structure --------------------------------------------------------------
+# --- structure + modes ------------------------------------------------------
 def test_loads_two_zone_tree(tmp_path, qtbot):
     _write_sidecar(tmp_path)
     window = _new_window(tmp_path, qtbot)
@@ -123,13 +135,24 @@ def test_loads_two_zone_tree(tmp_path, qtbot):
     assert "SAFE" in window._spine_label.text()
 
 
-def test_scrubbed_shown_when_safe(tmp_path, qtbot):
+def test_mode_switching(tmp_path, qtbot):
     _write_sidecar(tmp_path)
     window = _new_window(tmp_path, qtbot)
 
-    assert window._scrubbed_group.isVisibleTo(window)
-    assert "{{TERM-1}}" in window._scrubbed_edit.toPlainText()
-    assert "Jane" not in window._scrubbed_edit.toPlainText()
+    assert window._stack.currentIndex() == 0  # review by default
+    window.set_mode("sendout")
+    assert window._stack.currentIndex() == 1
+    assert window._tab_buttons["sendout"].isChecked()
+    window.set_mode("restore")
+    assert window._stack.currentIndex() == 2
+
+
+def test_scrubbed_available_when_safe(tmp_path, qtbot):
+    _write_sidecar(tmp_path)
+    window = _new_window(tmp_path, qtbot)
+
+    assert "{{TERM-1}}" in window._scrubbed_text
+    assert "Jane" not in window._scrubbed_text
 
 
 def test_empty_state_when_no_sidecars(tmp_path, qtbot):
@@ -140,30 +163,61 @@ def test_empty_state_when_no_sidecars(tmp_path, qtbot):
     assert "No sanitized transcripts" in window._spine_label.text()
 
 
+# --- context / side-by-side (UX-2) ------------------------------------------
+def test_context_pane_populates_on_selection(tmp_path, qtbot):
+    _write_sidecar(tmp_path)
+    window = _new_window(tmp_path, qtbot)
+
+    window._tree.setCurrentItem(window._group_removed.child(0))  # the Jane row
+
+    assert "Jane" in window._ctx_meta.text()
+    assert "{{TERM-1}}" in window._ctx_meta.text()
+    assert "«Jane»" in window._ctx_orig.toPlainText()
+    assert "«{{TERM-1}}»" in window._ctx_sub.toPlainText()
+    assert window._ctx_after_label.text() == "AFTER SUBSTITUTION"
+
+
+def test_context_for_pending_suggestion_says_if_approved(tmp_path, qtbot):
+    _write_with_suggestion(tmp_path)
+    window = _new_window(tmp_path, qtbot)
+
+    # Acme is the sole child of the suggestions group.
+    window._tree.setCurrentItem(window._group_suggestions.child(0))
+
+    assert window._ctx_after_label.text() == "IF APPROVED"
+    # ORG is an entity label → lettered placeholder ({{ORG-A}}, not {{ORG-1}}).
+    assert "«{{ORG-A}}»" in window._ctx_sub.toPlainText()  # proposed placeholder
+    assert "«Acme»" in window._ctx_orig.toPlainText()
+
+
 # --- restore + key ----------------------------------------------------------
 def test_restore_round_trips(tmp_path, qtbot):
     _write_sidecar(tmp_path)
     window = _new_window(tmp_path, qtbot)
 
-    window._returned_edit.setPlainText(window._scrubbed_edit.toPlainText())
+    window._returned_edit.setPlainText(window._scrubbed_text)
     window._restore_button.click()
 
     assert window._restored_edit.toPlainText() == "Call Jane\nbye Jane"
 
 
-def test_restore_handles_markdown_wrapping(tmp_path, qtbot):
+def test_restore_reports_unresolved_tags(tmp_path, qtbot):
     _write_sidecar(tmp_path)
     window = _new_window(tmp_path, qtbot)
 
-    window._returned_edit.setPlainText("Call **{{TERM-1}}** please")
+    # {{TERM-1}} is in the key; {{ORG-9}} is not → must be surfaced (FR-7).
+    window._returned_edit.setPlainText("{{TERM-1}} and {{ORG-9}}")
     window._restore_button.click()
 
-    assert window._restored_edit.toPlainText() == "Call **Jane** please"
+    assert window._restored_edit.toPlainText() == "Jane and {{ORG-9}}"
+    assert "1 placeholder(s) filled" in window._restore_report.text()
+    assert "unresolved" in window._restore_report.text()
 
 
 def test_key_is_hidden_until_revealed(tmp_path, qtbot):
     _write_sidecar(tmp_path)
     window = _new_window(tmp_path, qtbot)
+    window.set_mode("sendout")
 
     assert not window._key_edit.isVisibleTo(window)  # secret hidden by default
     window._reveal_button.setChecked(True)
@@ -171,22 +225,29 @@ def test_key_is_hidden_until_revealed(tmp_path, qtbot):
     assert "{{TERM-1}}" in window._key_edit.toPlainText()
 
 
-def test_copy_scrubbed_confirms_with_toast(tmp_path, qtbot):
+def test_send_out_copy_and_preview(tmp_path, qtbot):
     _write_sidecar(tmp_path)
     window = _new_window(tmp_path, qtbot)
+    window.set_mode("sendout")
 
+    assert window._copy_button.isEnabled()
     window._copy_button.click()
     assert "copied" in window._last_toast
 
+    assert not window._preview_edit.isVisibleTo(window)  # collapsed by default
+    window._preview_toggle.setChecked(True)
+    assert window._preview_edit.isVisibleTo(window)
+    assert "{{TERM-1}}" in window._preview_edit.toPlainText()
 
-# --- suggestions (Approve/Reject buttons, held by default) ------------------
+
+# --- suggestions (Approve/Reject; held by default) --------------------------
 def test_pending_suggestion_starts_in_cleartext(tmp_path, qtbot):
     _write_with_suggestion(tmp_path)
     window = _new_window(tmp_path, qtbot)
 
-    assert "Jane" not in window._scrubbed_edit.toPlainText()  # declared removed
-    assert "Acme" in window._scrubbed_edit.toPlainText()  # suggestion held
-    assert "acme" in window._suggestion_buttons  # Approve/Reject present
+    assert "Jane" not in window._scrubbed_text  # declared removed
+    assert "Acme" in window._scrubbed_text  # suggestion held
+    assert "acme" in window._suggestion_buttons
 
 
 def test_approving_a_suggestion_removes_it_and_persists(tmp_path, qtbot):
@@ -195,11 +256,11 @@ def test_approving_a_suggestion_removes_it_and_persists(tmp_path, qtbot):
 
     window._suggestion_buttons["acme"][0].click()  # Approve
 
-    assert "Acme" not in window._scrubbed_edit.toPlainText()
+    assert "Acme" not in window._scrubbed_text
     assert "Acme" in window._sidecar.key.entries.values()
 
     reopened = _new_window(tmp_path, qtbot)
-    assert "Acme" not in reopened._scrubbed_edit.toPlainText()  # persisted
+    assert "Acme" not in reopened._scrubbed_text  # persisted
 
 
 def test_rejecting_a_suggestion_moves_to_cleartext_and_reapproves(tmp_path, qtbot):
@@ -208,28 +269,26 @@ def test_rejecting_a_suggestion_moves_to_cleartext_and_reapproves(tmp_path, qtbo
 
     window._suggestion_buttons["acme"][1].click()  # Reject
 
-    assert "Acme" in window._scrubbed_edit.toPlainText()  # kept in cleartext
+    assert "Acme" in window._scrubbed_text  # kept in cleartext
     assert window._group_cleartext.childCount() == 1
     cleartext_row = window._group_cleartext.child(0)
     assert "Acme" in cleartext_row.text(0)
-    assert cleartext_row.font(0).strikeOut()  # struck through (UX-9 / UX-5)
+    assert cleartext_row.font(0).strikeOut()
 
     window._reapprove_buttons["acme"].click()  # Remove after all
-    assert "Acme" not in window._scrubbed_edit.toPlainText()
+    assert "Acme" not in window._scrubbed_text
 
 
-# --- rejecting a guaranteed row via the keyboard-accessible action ----------
 def test_keep_action_rejects_guaranteed_row_and_is_keyboard_bound(tmp_path, qtbot):
     _write_sidecar(tmp_path)
     window = _new_window(tmp_path, qtbot)
 
-    # The action carries a shortcut → it is NOT mouse-only (context menu + key).
-    assert not window._keep_action.shortcut().isEmpty()
+    assert not window._keep_action.shortcut().isEmpty()  # not mouse-only
 
     window._tree.setCurrentItem(window._group_removed.child(0))  # the Jane row
     window._keep_action.trigger()
 
-    assert "Jane" in window._scrubbed_edit.toPlainText()  # kept in cleartext
+    assert "Jane" in window._scrubbed_text  # kept in cleartext
     assert window._sidecar.key.entries == {}  # dropped from the key
     assert window._group_cleartext.childCount() == 1
 
@@ -240,9 +299,19 @@ def test_approve_everything_detected(tmp_path, qtbot):
 
     window._approve_all_button.click()
 
-    scrubbed = window._scrubbed_edit.toPlainText()
-    assert "Jane" not in scrubbed
-    assert "Acme" not in scrubbed
+    assert "Jane" not in window._scrubbed_text
+    assert "Acme" not in window._scrubbed_text
+
+
+# --- empty-state scan evidence (US8) ----------------------------------------
+def test_empty_result_shows_scan_evidence(tmp_path, qtbot):
+    _write_empty(tmp_path)
+    window = _new_window(tmp_path, qtbot)
+
+    assert window._review_body.currentIndex() == 1  # the "proof it ran" panel
+    assert "NOTHING SENSITIVE FOUND" in window._spine_label.text()
+    evidence = window._empty_evidence.text()
+    assert "Scanned 7 detectors across 1 segments" in evidence
 
 
 # --- PG7: unsafe withholds the scrubbed text from every copy path -----------
@@ -252,12 +321,11 @@ def test_unsafe_withholds_scrubbed_and_blocks_every_copy_path(tmp_path, qtbot):
     assert scrubbed  # sanity: there is something that must be withheld
     window = _new_window(tmp_path, qtbot)
 
-    # Loud, blocking, and worded (not colour-only).
-    assert window._unsafe_wall.isVisibleTo(window)
-    assert not window._scrubbed_group.isVisibleTo(window)
+    # Loud, blocking, worded (Review mode is active by default).
+    assert window._review_block.isVisibleTo(window)
     assert "UNSAFE" in window._spine_label.text()
 
-    # 1) The scrubbed text is in no selectable/copyable widget.
+    # 1) The scrubbed text is in no selectable/copyable widget (any mode).
     assert all(scrubbed not in text for text in _selectable_texts(window))
 
     # 2) No reachable copy path: the handler is a hard no-op, even called direct.
@@ -266,8 +334,20 @@ def test_unsafe_withholds_scrubbed_and_blocks_every_copy_path(tmp_path, qtbot):
     window._copy_scrubbed()
     assert clipboard.text() == "SENTINEL-UNCHANGED"
 
-    # 3) The affordance itself is gone.
+    # 3) Send-out shows the wall, not the copy area.
+    window.set_mode("sendout")
+    assert window._sendout_wall.isVisibleTo(window)
+    assert not window._sendout_safe.isVisibleTo(window)
     assert not window._copy_button.isEnabled()
+
+
+def test_context_is_withheld_when_unsafe(tmp_path, qtbot):
+    _write_unsafe(tmp_path)
+    window = _new_window(tmp_path, qtbot)
+
+    window._tree.setCurrentItem(window._group_removed.child(0))
+    assert window._ctx_withheld.isVisibleTo(window)
+    assert not window._ctx_body.isVisibleTo(window)
 
 
 # --- UX-5: tier + state readable without colour -----------------------------
@@ -279,7 +359,6 @@ def test_zone_headers_and_state_read_without_colour(tmp_path, qtbot):
     assert "SUGGESTIONS" in window._group_suggestions.text(0)
     assert "Keeping in cleartext" in window._group_cleartext.text(0)
 
-    # A rejected item is carried by strike-out + grouping, not colour.
     window._tree.setCurrentItem(window._group_removed.child(0))
     window._keep_action.trigger()
     assert window._group_cleartext.child(0).font(0).strikeOut()

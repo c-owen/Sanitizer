@@ -78,6 +78,7 @@ def sanitize_to_sidecar(transcription_id, segments, config: dict, *, base_dir=No
         "removed_items": sanitization.removed_items,
         "pending_items": sanitization.pending_items,
         "segment_count": len(sanitization.segments),
+        "detector_count": len(detectors),  # empty-state scan evidence (US8)
         "settings": {
             "pii": sorted(enabled_pii_types(config)),
             "suggestions": _coerce_bool(config.get(CONFIG_ENABLE_SUGGESTIONS, False)),
