@@ -24,10 +24,14 @@
 | **UX build — Step B (modes + master-detail)** | ✅ **done** (2026-06-30) | Three **modes** (Review / Send out / Restore); Review is a **master-detail** split with a **side-by-side context pane** from `placements` (UX-2); restore **unresolved-tag report** (FR-7); empty-state **scan evidence** (US8). |
 | **UX build — Step C (miss-catching)** | ✅ **done** (2026-06-30) | Reverse **"not touched — confirm these"** strip (heuristic candidates, UX-3/FR-22) + **select-to-redact everywhere** & add-to-list (FR-16). Pure-core `find_miss_candidates` + `build_manual_item`. |
 | **UX build — Step D (teach + scale)** | ✅ **done** (2026-06-30) — on branch `step-d-polish` | First-use key teaching (US6, dismiss-once); **informed auto-apply** (FR-12, gated on ≥1 reviewed run); in-window **declared-list editing** (US2 — "add to my list" now a real cross-transcript term); tree **filter**; grayscale styling. Two new pure stores: `appstate.py`, `declared_store.py`. |
-| 6 — Guarantee hardening + offline proof + DoD | ⬜ planned | The whole v2 UX (A–D) is in; Phase 6 locks PG1–PG8 in CI. |
+| **6 — Guarantee hardening + offline proof + DoD** | ✅ **done** (2026-06-30) — on branch `phase-6-guarantees` | **PG1–PG8** consolidated in one build-failing suite (`guarantees_test.py`), incl. the new **PG1 offline** (network primitives rigged to raise → guaranteed path still succeeds); **FR-14 extensibility** demo (new MAC detector + HTML format handler via public seams, no existing code touched); **locale-completeness** (14 files, no empty values); user-facing **README** (guarantees + limits + "key is the secret", NG2). |
 
-**Current state at a glance:** `cloak_core` **v0.6.0** · **215 tests pass** on system
-Python, **256** in `.venv-qt` (PyQt6 + hypothesis + markdown) · `ruff` clean.
+**Current state at a glance:** `cloak_core` **v0.6.0** · **244 tests pass** on system
+Python, **285** in `.venv-qt` (PyQt6 + hypothesis + markdown) · `ruff` clean.
+**Phases 0–6 + the full v2 UX (A–D) are done** — every product guarantee (PG1–PG8) is
+now backed by a build-failing test (`cloak/cloak_core/tests/guarantees_test.py`,
+including the offline PG1), FR-14 extensibility is demonstrated, locale files are
+completeness-checked, and there's a user-facing `cloak/README.md`.
 The **v2 UX (Steps A–D) is complete** (docs under `design/`; task brief
 `cloak-implementation-brief-for-claude-code.md`). One window, **three modes** (Review /
 Send out / Restore) under a persistent **safety spine** (verdict in word+glyph, UX-5).
@@ -499,25 +503,27 @@ flowchart TB
 
 ---
 
-## 8. What's next — Phase 6 (guarantee hardening + DoD)
+## 8. What's next — the build is feature-complete; optional polish remains
 
-Phases 0–5b **and the full v2 UX rebuild (Steps A–D)** are done (§1): the guaranteed
-core, the suggestion tier, the host pipeline, the sidecar, and the rebuilt
-review/restore surface (three modes, master-detail context, miss-catching, first-use
-teaching, informed auto-apply, in-window declared-list editing, filter, styling) all
-work and are tested. Phase 6 is the main remaining phase. Full spec:
-[`../cloak-implementation-plan.md`](../cloak-implementation-plan.md) §Phase 6.
+**Phases 0–6 and the full v2 UX rebuild (Steps A–D) are all done (§1).** The guaranteed
+core, the suggestion tier, the host pipeline, the sidecar, the rebuilt review/restore
+surface, and the guarantee-hardening/DoD phase all work and are tested. The brief's
+**Definition of Done is met**: every product guarantee is backed by a build-failing
+test. Full spec: [`../cloak-implementation-plan.md`](../cloak-implementation-plan.md).
 
-**Phase 6 — lock the contract into CI (the main remaining phase):**
-- A dedicated **PG1–PG8 guarantee module** wired so a violation **fails the build**.
-  Most PGs already have tests scattered across suites — gather/strengthen them. The new
-  one is **PG1 (offline):** monkeypatch `socket`/`urllib`/`huggingface_hub` to raise,
-  run the full guaranteed path, assert success + zero network attempts.
-- **Extensibility demo (FR-14):** add one new detector (e.g. IBAN/MAC) *and* a new format
-  handler **without touching existing code**, each with its own test — living proof of the
-  modular mandate.
-- **User-facing README** (what Cloak guarantees, what it does NOT — NG2, "the key is the
-  secret"); locale-completeness test (14 files, no empty values).
+**Phase 6 delivered (done):**
+- **`cloak/cloak_core/tests/guarantees_test.py`** — PG1–PG8 stated once, build-failing.
+  The new **PG1 (offline)** rigs `socket`/`urllib` to raise and runs the full guaranteed
+  path (declared + every PII type, per segment, with the gate) → still succeeds. PG2–PG8
+  consolidate the scattered coverage into one legible file of record.
+- **`cloak/cloak_core/tests/extensibility_test.py`** — FR-14: a new `MacAddressDetector`
+  **and** a new `HtmlPreHandler` format handler, defined in the test via the public
+  `Detector`/`FormatHandler` seams, run through the **unmodified** sanitizer/gate/restore.
+  Nothing in `cloak_core` was edited — the modular mandate, proven.
+- **`cloak/tests/locale_completeness_test.py`** — all 14 locale files: valid JSON object,
+  no empty-string values (the AGENTS.md blank-UI trap).
+- **`cloak/README.md`** — user-facing: the guarantees, the honest limits (NG2), and the
+  "the key is the secret" model.
 
 **Step D wiring worth remembering (where the new state lives):**
 - Two **pure** stores under Cloak's data dir (host-path-injected, same pattern as
