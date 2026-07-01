@@ -32,10 +32,15 @@ Python, **292** in `.venv-qt` (PyQt6 + hypothesis + markdown) · `ruff` clean.
 now backed by a build-failing test (`cloak/cloak_core/tests/guarantees_test.py`,
 including the offline PG1), FR-14 extensibility is demonstrated, locale files are
 completeness-checked, and there's a user-facing `cloak/README.md`. **Suggestions are now
-on-demand:** a **"✨ Run suggestions" button** in the review window scans the loaded
-transcript with the vendored GLiNER model on a **worker thread** (windowed inference,
-download-on-first-use, failures shown — never a false "found nothing"); results land as
-PENDING rows to approve/reject. GLiNER is **vendored** (`cloak/_vendor`), so no pip.
+on-demand and CONFIRMED WORKING in real Buzz (2026-07-01):** a **"✨ Run suggestions"
+button** in the review window scans the loaded transcript with the vendored GLiNER model
+on a **worker thread** (windowed inference, download-on-first-use, failures shown — never
+a false "found nothing"); results land as PENDING rows to approve/reject. GLiNER is
+**vendored** (`cloak/_vendor`), so no pip. **Open problem → next work:** on a real
+1450-segment council meeting it flagged **~222 entities** — NER finds every named entity,
+but "named entity" ≠ "sensitive". The agreed fix is a **run-once-then-triage** surface
+(user-exposed confidence slider + type toggles + grouped bulk actions, filtering the
+computed set live). Design + plan in **§8**.
 The **v2 UX (Steps A–D) is complete** (docs under `design/`; task brief
 `cloak-implementation-brief-for-claude-code.md`). One window, **three modes** (Review /
 Send out / Restore) under a persistent **safety spine** (verdict in word+glyph, UX-5).
@@ -446,6 +451,20 @@ Lint everything: `uvx ruff check cloak tools` and `uvx ruff format cloak tools`.
   now the multilingual `urchade/gliner_multi-v2.1`. To update GLiNER: replace
   `cloak/_vendor/gliner/` from the new wheel (see `cloak/_vendor/README.md`). `_vendor` is
   excluded from ruff; the packager auto-includes it in the zip.
+- **GLiNER offline load needs the BASE backbone's tokenizer + config (2026-07-01 fix).**
+  `gliner_multi-v2.1`'s HF repo ships **only** `gliner_config.json` + weights — **no
+  tokenizer**. Its config's `model_name` points at `microsoft/mdeberta-v3-base`, and
+  gliner loads the tokenizer (`AutoTokenizer`) and encoder config (`AutoConfig`,
+  `_vendor/gliner/modeling/encoder.py:88`) from **that** repo. So a first run that only
+  fetched the gliner repo fails at load with *"couldn't connect to huggingface.co …
+  couldn't find in cache"*. Fix in `model_provider_buzz.py`: `_ensure_downloaded` reads
+  `model_name` from `gliner_config.json` and **also fetches the base backbone's tokenizer
+  + config** (via Buzz's downloader, `_BASE_PATTERNS`) — but **not** its weights (gliner
+  ships its own fine-tuned encoder; `from_pretrained=False` → `from_config`). `_load_model`
+  loads the gliner files from the **local snapshot dir** (`Path(model_id).exists()` → no
+  hub) and threads `cache_dir=model_root_dir` + `local_files_only` so the base resolves
+  from Buzz's cache. Verified the base download fetches exactly `config.json` +
+  `tokenizer_config.json` + `spm.model` (~4 MB), no weights.
 - **KNOWN ISSUE — demo crashed Buzz on the *first* open, worked on the second.** Likely
   PyQt6's default of aborting the process on an unhandled exception inside a slot,
   triggered by a one-time first-run hiccup (lazy `cloak_core` import, or first-render
@@ -562,20 +581,43 @@ test. Full spec: [`../cloak-implementation-plan.md`](../cloak-implementation-pla
   records `auto_applied_suggestions` (0 unless opted in). `has_reviewed` flips on the
   first decision edit in the review window.
 
-**On-demand suggestions — built (2026-07-01); one cleanup left.** The **"✨ Run
-suggestions" button** (`review_window.py`) scans the *loaded* transcript on a
+**On-demand suggestions — built + confirmed working in real Buzz (2026-07-01).** The
+**"✨ Run suggestions" button** (`review_window.py`) scans the *loaded* transcript on a
 `_SuggestionWorker` (QThread) — `cloak_core.suggest_items` runs the detector over
 **joined ~1200-char windows** (context + speed) and **re-locates each surface** per
 segment (word-boundary safe → exact placements; join phantoms drop out). Results are
 PENDING rows; the worker distinguishes **model-failure from empty** via the detector's
-new `available`/`last_error` (so a broken model shows "Unavailable — …", never a false
-"found nothing"). Honors the FR-12 auto-apply pref. Suggestions are now **decoupled from
-transcription** — this is the intended path. **Cleanup owed:** `on_complete` still *can*
-run the old per-segment (frozen) suggestion path when `enable_suggestions` is on
-(default **off**, so dormant); retire that path + the `enable_suggestions` config field +
-`pipeline._auto_apply_suggestions` now that the button supersedes them (FR-12 lives in
-`_on_suggestions_ready`). Also: exercise the real GLiNER end-to-end in Buzz (opt-in
-`CLOAK_RUN_MODEL_TEST=1` covers the fetch+run).
+`available`/`last_error` (a broken model shows "Unavailable — …", never a false "found
+nothing"). Honors the FR-12 auto-apply pref. Decoupled from transcription — the intended
+path. Offline load needs the base backbone (see §6 gotcha). Parameters today:
+`suggest.DEFAULT_THRESHOLD = 0.5`, provider floor `0.3`, labels
+`person/organization/location/project`, model `urchade/gliner_multi-v2.1`.
+
+**⏭ NEXT WORK — the "run-once, triage-interactively" surface (the ~222-items problem).**
+On a real 1450-segment council meeting, suggestions flagged **~222 entities** — NER finds
+every named entity, but a public meeting is wall-to-wall public people/orgs/streets;
+"named entity" ≠ "sensitive". User + agent agreed the fix is **compute once, then make the
+result an interactive triage surface** (no re-run). Concrete plan:
+- **Keep the score.** `suggest_items` currently discards GLiNER's confidence; keep the max
+  score per `ReviewItem` (small field) so a slider has something to filter on. Also request
+  **all** labels + low floor once, so type/threshold filtering is client-side and free.
+- **User-exposed live controls** (filter the computed set, instant, with a live count
+  "34 of 222"): a **confidence slider**, **type toggles** (person/org/place/project),
+  **min-mentions**. Optionally persist defaults in plugin settings.
+- **Non-linear review:** **group the Suggestions zone by type**, each with a count + a
+  **bulk action** ("reject all Places", "approve all People"); **sort by confidence or
+  rarity** (rarely-named ≈ often the private individual); **multi-select + keyboard**
+  (shift-click range, `a`/`r` approve/reject selection, `j/k` nav). This is the deferred
+  **FR-22 suspicion lens** made concrete.
+- **Boundary:** only changing *which labels* GLiNER searches needs a re-run; everything
+  else is a live view over the one result.
+Full discussion is in the transcript around the 222-items exchange.
+
+**Cleanup owed (do alongside/after the triage work):** `on_complete` still *can* run the
+old per-segment (frozen) suggestion path when `enable_suggestions` is on (default **off**,
+so dormant); retire that path + the `enable_suggestions` config field +
+`pipeline._auto_apply_suggestions` now the button supersedes them (FR-12 lives in
+`_on_suggestions_ready`). Also: exercise real GLiNER via opt-in `CLOAK_RUN_MODEL_TEST=1`.
 
 **Smaller remaining items (optional / low priority):**
 - **Suspicion lens (FR-22, lowest priority):** an opt-in toggle that dims clearly-safe
