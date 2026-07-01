@@ -13,7 +13,13 @@ from pathlib import Path
 
 import pytest
 
-from cloak_core import persistence
+from cloak_core import (
+    Preferences,
+    add_declared_term,
+    persistence,
+    write_preferences,
+)
+from cloak_core.detectors.suggest import ModelSuggestionDetector, RawEntity
 from cloak_host.pipeline import build_detectors, sanitize_to_sidecar
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -125,3 +131,95 @@ def test_on_complete_never_raises_into_host(tmp_path, monkeypatch):
 
     monkeypatch.setattr(pipeline, "sanitize_to_sidecar", _boom)
     plugin.on_complete("1", None, [_Seg(0, 1, "x")], _Ctx({}))  # must not raise
+
+
+# --- Step D: unioned declared store (US2) -----------------------------------
+def test_build_detectors_unions_the_declared_store(tmp_path):
+    add_declared_term(tmp_path, "person: Jane")  # in Cloak's store, not the config
+    detectors = build_detectors({"declared_terms": "Bob"}, data_dir=str(tmp_path))
+    declared = next(d for d in detectors if type(d).__name__ == "DeclaredListDetector")
+    hits = {d.value for d in declared.detect("Jane and Bob")}
+    assert hits == {"Jane", "Bob"}  # config term + stored term together
+
+
+def test_stored_term_is_redacted_end_to_end(tmp_path):
+    add_declared_term(tmp_path, "Karen")
+    _dir, result = sanitize_to_sidecar(
+        "1", [_Seg(0, 1, "Call Karen")], {}, base_dir=str(tmp_path)
+    )
+    assert "Karen" not in result.scrubbed_text  # picked up from the store next run
+
+
+# --- Step D: informed auto-apply (FR-12) ------------------------------------
+class _StubProvider:
+    """A tiny model stand-in: flags one fixed surface, no ML/network."""
+
+    def __init__(self, surface, label):
+        self._surface, self._label = surface, label
+
+    def predict(self, text, labels):
+        index = text.find(self._surface)
+        if index < 0:
+            return []
+        return [RawEntity(index, index + len(self._surface), self._label, 0.9)]
+
+
+def _inject_stub_suggestion(monkeypatch, surface="Acme", label="organization"):
+    """Make ``build_detectors`` also emit a stub suggestion (bare-name lookup, so
+    patching the module attribute reaches the internal call in sanitize_to_sidecar)."""
+    import cloak_host.pipeline as pipeline
+
+    real = pipeline.build_detectors
+
+    def patched(config, *, data_dir=None):
+        detectors = real(config, data_dir=data_dir)
+        detectors.append(ModelSuggestionDetector(_StubProvider(surface, label)))
+        return detectors
+
+    monkeypatch.setattr(pipeline, "build_detectors", patched)
+
+
+def test_auto_apply_off_by_default_holds_suggestion(tmp_path, monkeypatch):
+    _inject_stub_suggestion(monkeypatch)
+    _dir, result = sanitize_to_sidecar(
+        "1",
+        [_Seg(0, 1, "Jane at Acme")],
+        {"declared_terms": "Jane"},
+        base_dir=str(tmp_path),
+    )
+    assert "Acme" in result.scrubbed_text  # held, not applied (FR-9 default)
+    assert result.pending_items == 1
+    sidecar = persistence.read_sidecar(tmp_path / "1")
+    assert sidecar.meta["auto_applied_suggestions"] == 0
+
+
+def test_auto_apply_applies_when_opted_in_and_reviewed(tmp_path, monkeypatch):
+    _inject_stub_suggestion(monkeypatch)
+    write_preferences(
+        tmp_path, Preferences(has_reviewed=True, auto_apply_suggestions=True)
+    )
+    _dir, result = sanitize_to_sidecar(
+        "1",
+        [_Seg(0, 1, "Jane at Acme")],
+        {"declared_terms": "Jane"},
+        base_dir=str(tmp_path),
+    )
+    assert "Acme" not in result.scrubbed_text  # applied on the informed opt-in
+    assert "Acme" in result.key.entries.values()
+    sidecar = persistence.read_sidecar(tmp_path / "1")
+    assert sidecar.meta["auto_applied_suggestions"] == 1
+
+
+def test_auto_apply_is_gated_on_having_reviewed(tmp_path, monkeypatch):
+    _inject_stub_suggestion(monkeypatch)
+    # Opted in, but never reviewed → the informed gate must still hold it.
+    write_preferences(
+        tmp_path, Preferences(has_reviewed=False, auto_apply_suggestions=True)
+    )
+    _dir, result = sanitize_to_sidecar(
+        "1",
+        [_Seg(0, 1, "Jane at Acme")],
+        {"declared_terms": "Jane"},
+        base_dir=str(tmp_path),
+    )
+    assert "Acme" in result.scrubbed_text  # still held — gate not satisfied

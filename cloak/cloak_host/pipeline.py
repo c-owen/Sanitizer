@@ -18,10 +18,17 @@ import os
 
 from cloak_core import __version__ as core_version
 from cloak_core import persistence
+from cloak_core.appstate import Preferences, read_preferences
+from cloak_core.declared_store import read_declared_terms
 from cloak_core.detectors.declared import DeclaredListDetector, parse_declared_terms
 from cloak_core.detectors.pii import PII_TYPES, pii_detectors
-from cloak_core.transcript import sanitize_transcript
-from cloak_host.paths import sidecar_dir
+from cloak_core.model import DecisionState, TrustTier
+from cloak_core.transcript import (
+    apply_review,
+    next_free_placeholder,
+    sanitize_transcript,
+)
+from cloak_host.paths import cloak_data_dir, sidecar_dir
 
 logger = logging.getLogger(__name__)
 
@@ -39,11 +46,17 @@ def enabled_pii_types(config: dict) -> set[str]:
     return {t for t in PII_TYPES if _coerce_bool(config.get(pii_config_key(t), True))}
 
 
-def build_detectors(config: dict) -> list:
-    """Assemble the detector set from plugin config (guaranteed path by default)."""
+def build_detectors(config: dict, *, data_dir: str | None = None) -> list:
+    """Assemble the detector set from plugin config (guaranteed path by default).
+
+    Declared terms are the **union** of the config textarea and Cloak's own
+    declared-terms store (``data_dir``, when given) — so a term the user added
+    in-window (US2/FR-16) applies to this and every later transcript, not just the
+    one where it was caught.
+    """
     detectors: list = []
 
-    terms = parse_declared_terms(config.get(CONFIG_DECLARED_TERMS, "") or "")
+    terms = parse_declared_terms(_declared_text(config, data_dir))
     if terms:
         detectors.append(DeclaredListDetector(terms))
 
@@ -57,14 +70,34 @@ def build_detectors(config: dict) -> list:
     return detectors
 
 
+def _declared_text(config: dict, data_dir: str | None) -> str:
+    """Config declared-terms text unioned with Cloak's own store, as one blob."""
+    text = config.get(CONFIG_DECLARED_TERMS, "") or ""
+    if data_dir:
+        stored = read_declared_terms(data_dir)
+        if stored:
+            text = (text + "\n" + "\n".join(stored)).strip()
+    return text
+
+
 def sanitize_to_sidecar(transcription_id, segments, config: dict, *, base_dir=None):
     """Sanitize ``segments`` and persist the sidecar; return (directory, result).
 
-    ``base_dir`` overrides the real Buzz cache location (used by tests). The stored
-    transcript is never touched — only the sidecar is written.
+    ``base_dir`` overrides the real Buzz cache location (used by tests) and is also
+    where Cloak's declared-terms store and preferences live. The stored transcript
+    is never touched — only the sidecar is written.
     """
-    detectors = build_detectors(config)
+    data_dir = base_dir if base_dir is not None else _data_dir()
+    detectors = build_detectors(config, data_dir=data_dir)
     sanitization = sanitize_transcript(segments, detectors)
+
+    # Informed auto-apply (FR-12): only after the user has reviewed at least once
+    # and explicitly opted in. The pure core still held these PENDING (FR-9); this
+    # is the *host* applying the user's recorded choice, never a silent default.
+    prefs = read_preferences(data_dir) if data_dir else Preferences()
+    auto_applied = 0
+    if prefs.auto_apply_suggestions and prefs.has_reviewed:
+        auto_applied = _auto_apply_suggestions(sanitization)
 
     directory = (
         os.path.join(base_dir, str(transcription_id))
@@ -77,6 +110,7 @@ def sanitize_to_sidecar(transcription_id, segments, config: dict, *, base_dir=No
         "clean": sanitization.clean,
         "removed_items": sanitization.removed_items,
         "pending_items": sanitization.pending_items,
+        "auto_applied_suggestions": auto_applied,  # FR-12: 0 unless opted in
         "segment_count": len(sanitization.segments),
         "detector_count": len(detectors),  # empty-state scan evidence (US8)
         "settings": {
@@ -89,6 +123,38 @@ def sanitize_to_sidecar(transcription_id, segments, config: dict, *, base_dir=No
     }
     persistence.write_sidecar(directory, sanitization, meta)
     return directory, sanitization
+
+
+def _auto_apply_suggestions(sanitization) -> int:
+    """Approve every held suggestion and re-derive; return how many (FR-12).
+
+    Mutates ``sanitization`` in place: flips each PENDING suggestion to APPROVED,
+    allocates a fresh placeholder, then re-derives the scrubbed segments + key via
+    :func:`~cloak_core.transcript.apply_review`. ``clean`` is unaffected — suggestions
+    are never gated, so approving them only adds removals.
+    """
+    existing = {i.placeholder for i in sanitization.items if i.placeholder}
+    approved = 0
+    for item in sanitization.items:
+        if item.tier == TrustTier.SUGGESTED and item.state == DecisionState.PENDING:
+            item.state = DecisionState.APPROVED
+            if not item.placeholder:
+                item.placeholder = next_free_placeholder(existing, item.label)
+                existing.add(item.placeholder)
+            approved += 1
+    if approved:
+        segments, key = apply_review(sanitization.segments, sanitization.items)
+        sanitization.segments = segments
+        sanitization.key = key
+    return approved
+
+
+def _data_dir() -> str | None:
+    """Cloak's real data directory, or ``None`` if platformdirs is unavailable."""
+    try:
+        return cloak_data_dir()
+    except Exception:  # noqa: BLE001 - platformdirs absent → no store, defaults
+        return None
 
 
 def _build_suggestion_detector():

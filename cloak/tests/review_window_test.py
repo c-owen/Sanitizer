@@ -23,7 +23,11 @@ from PyQt6.QtWidgets import (  # noqa: E402
     QTextEdit,
 )
 
-from cloak_core import persistence  # noqa: E402
+from cloak_core import (  # noqa: E402
+    persistence,
+    read_declared_terms,
+    read_preferences,
+)
 from cloak_core.detectors.declared import DeclaredListDetector  # noqa: E402
 from cloak_core.detectors.suggest import (  # noqa: E402
     ModelSuggestionDetector,
@@ -109,6 +113,15 @@ def _write_with_miss(directory):
         [DeclaredListDetector(["Jane"])],
     )
     persistence.write_sidecar(directory / "6", sanitization, _meta(sanitization))
+    return sanitization
+
+
+def _write_two_terms(directory):
+    # Two distinct declared rows, so a filter has something to narrow.
+    sanitization = sanitize_transcript(
+        [Seg(0, 1, "Call Jane and Bob")], [DeclaredListDetector(["Jane", "Bob"])]
+    )
+    persistence.write_sidecar(directory / "8", sanitization, _meta(sanitization))
     return sanitization
 
 
@@ -414,3 +427,103 @@ def test_zone_headers_and_state_read_without_colour(tmp_path, qtbot):
     window._tree.setCurrentItem(window._group_removed.child(0))
     window._keep_action.trigger()
     assert window._group_cleartext.child(0).font(0).strikeOut()
+
+
+# --- Step D: first-use key teaching (US6) -----------------------------------
+def test_first_use_key_note_shows_then_dismisses_and_persists(tmp_path, qtbot):
+    _write_sidecar(tmp_path)
+    window = _new_window(tmp_path, qtbot)
+    window.set_mode("sendout")
+
+    assert window._key_note.isVisibleTo(window)  # shown the first time
+    window._key_note_dismiss.click()
+    assert not window._key_note.isVisibleTo(window)
+    assert read_preferences(tmp_path).key_note_dismissed is True  # persisted
+
+    reopened = _new_window(tmp_path, qtbot)
+    reopened.set_mode("sendout")
+    assert not reopened._key_note.isVisibleTo(reopened)  # never again
+
+
+# --- Step D: informed auto-apply (FR-12) ------------------------------------
+def test_auto_apply_offer_hidden_until_a_review_then_persists(tmp_path, qtbot):
+    _write_sidecar(tmp_path)
+    window = _new_window(tmp_path, qtbot)
+
+    # Never reviewed → the offer is not shown (the informed gate).
+    assert not window._prefs.has_reviewed
+    assert not window._auto_apply_check.isVisibleTo(window)
+
+    window._approve_all_button.click()  # a decision edit → counts as a review
+
+    assert window._prefs.has_reviewed is True
+    assert read_preferences(tmp_path).has_reviewed is True  # persisted
+    assert window._auto_apply_check.isVisibleTo(window)  # now offered
+
+    reopened = _new_window(tmp_path, qtbot)
+    assert reopened._auto_apply_check.isVisibleTo(reopened)  # stays offered
+
+
+def test_toggling_auto_apply_persists_the_preference(tmp_path, qtbot):
+    _write_sidecar(tmp_path)
+    window = _new_window(tmp_path, qtbot)
+    window._approve_all_button.click()  # unlock the offer
+
+    window._auto_apply_check.setChecked(True)
+
+    assert read_preferences(tmp_path).auto_apply_suggestions is True
+    reopened = _new_window(tmp_path, qtbot)
+    assert reopened._auto_apply_check.isChecked()  # reflects the saved choice
+
+
+# --- Step D: in-window declared-list editing (US2) --------------------------
+def test_declared_list_editor_adds_and_removes(tmp_path, qtbot):
+    from cloak_host.review_window import _DeclaredListEditor
+
+    editor = _DeclaredListEditor(str(tmp_path))
+    qtbot.addWidget(editor)
+
+    editor._input.setText("person: Jane")
+    editor._add()
+    assert read_declared_terms(tmp_path) == ["person: Jane"]
+    assert editor._list.count() == 1
+
+    editor._list.setCurrentRow(0)
+    editor._remove()
+    assert read_declared_terms(tmp_path) == []
+    assert editor._list.count() == 0
+
+
+def test_add_to_list_promotes_the_term_to_the_declared_store(tmp_path, qtbot):
+    _write_with_miss(tmp_path)
+    window = _new_window(tmp_path, qtbot)
+
+    button = next(b for b in _miss_buttons(window) if "Karen" in b.text())
+    button.click()  # miss-strip redact uses add=True
+
+    # US2: it is now a real cross-transcript declared term, not only a meta note.
+    assert "Karen" in read_declared_terms(tmp_path)
+
+
+# --- Step D: scale — filter the decision tree -------------------------------
+def test_filter_narrows_the_decision_rows(tmp_path, qtbot):
+    _write_two_terms(tmp_path)
+    window = _new_window(tmp_path, qtbot)
+    assert window._group_removed.childCount() == 2
+
+    window._filter_edit.setText("jane")
+
+    rows = [window._group_removed.child(i) for i in range(2)]
+    shown = [r for r in rows if not r.isHidden()]
+    assert len(shown) == 1
+    assert "Jane" in shown[0].text(1)  # the "was: Jane" row survives the filter
+
+
+def test_clearing_the_filter_restores_all_rows(tmp_path, qtbot):
+    _write_two_terms(tmp_path)
+    window = _new_window(tmp_path, qtbot)
+
+    window._filter_edit.setText("jane")
+    window._filter_edit.setText("")
+
+    assert all(not window._group_removed.child(i).isHidden() for i in range(2))

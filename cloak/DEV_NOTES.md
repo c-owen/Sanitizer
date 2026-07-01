@@ -22,25 +22,27 @@
 | **5b — Interactive decision UX (core)** | ✅ **done** (2026-06-30) | Approve/reject + live re-derive + persist; bulk; rejected-visible; placeholder-on-approval. Lens (FR-22) + informed auto-apply (FR-12) + GUI polish deferred. |
 | **UX build — Step A (v2 review restructure)** | ✅ **done** (2026-06-30) | Two-zone decision **tree** (Removed / Suggestions / Keeping-in-cleartext); loud unsafe **withholds** scrubbed (PG7 tested); key fenced + copy toast (UX-6); demo/About dropped from menu. |
 | **UX build — Step B (modes + master-detail)** | ✅ **done** (2026-06-30) | Three **modes** (Review / Send out / Restore); Review is a **master-detail** split with a **side-by-side context pane** from `placements` (UX-2); restore **unresolved-tag report** (FR-7); empty-state **scan evidence** (US8). |
-| **UX build — Step C (miss-catching)** | ✅ **done** (2026-06-30) — on branch `step-c-miss-catching` | Reverse **"not touched — confirm these"** strip (heuristic candidates, UX-3/FR-22) + **select-to-redact everywhere** & add-to-list (FR-16). Pure-core `find_miss_candidates` + `build_manual_item`. |
-| 6 — Guarantee hardening + offline proof + DoD | ⬜ planned | UX Step D (first-use teaching, informed auto-apply, in-window declared list) can interleave. |
+| **UX build — Step C (miss-catching)** | ✅ **done** (2026-06-30) | Reverse **"not touched — confirm these"** strip (heuristic candidates, UX-3/FR-22) + **select-to-redact everywhere** & add-to-list (FR-16). Pure-core `find_miss_candidates` + `build_manual_item`. |
+| **UX build — Step D (teach + scale)** | ✅ **done** (2026-06-30) — on branch `step-d-polish` | First-use key teaching (US6, dismiss-once); **informed auto-apply** (FR-12, gated on ≥1 reviewed run); in-window **declared-list editing** (US2 — "add to my list" now a real cross-transcript term); tree **filter**; grayscale styling. Two new pure stores: `appstate.py`, `declared_store.py`. |
+| 6 — Guarantee hardening + offline proof + DoD | ⬜ planned | The whole v2 UX (A–D) is in; Phase 6 locks PG1–PG8 in CI. |
 
-**Current state at a glance:** `cloak_core` **v0.5.0** · **197 tests pass** on system
-Python, **231** in `.venv-qt` (PyQt6 + hypothesis + markdown) · `ruff` clean.
-The review window is being rebuilt against the approved **v2 design** (docs under
-`design/`; task brief `cloak-implementation-brief-for-claude-code.md`). **Steps A+B**
-landed: one window, **three modes** (Review / Send out / Restore) under a persistent
-**safety spine** (verdict in word+glyph, UX-5). Review is the home surface — a two-zone
-**decision tree** (▣ REMOVED · ◇ SUGGESTIONS Approve/Reject · ▸ Keeping-in-cleartext) in
-a **master-detail** split with a **side-by-side context pane** (ORIGINAL vs AFTER, from
-`placements`). Send out = one Copy + fenced key; Restore = mirror + **unresolved-tag
-report**; empty = **scan evidence**. **Step C** added **miss-catching**: a reverse
-"not touched — confirm these" strip below the tree (heuristic candidates, UX-3/FR-22)
-and **select-to-redact everywhere** in the context pane (FR-16), backed by pure-core
-`find_miss_candidates` + `build_manual_item`. **Unsafe withholds** the scrubbed text from
-every copy path in every mode (PG7, tested). `cloak_core` stays pure. Next: **UX Step D**
-— first-use key teaching, informed auto-apply (FR-12), in-window declared-list editing;
-then Phase 6 (lock PG1–PG8 in CI).
+**Current state at a glance:** `cloak_core` **v0.6.0** · **215 tests pass** on system
+Python, **256** in `.venv-qt` (PyQt6 + hypothesis + markdown) · `ruff` clean.
+The **v2 UX (Steps A–D) is complete** (docs under `design/`; task brief
+`cloak-implementation-brief-for-claude-code.md`). One window, **three modes** (Review /
+Send out / Restore) under a persistent **safety spine** (verdict in word+glyph, UX-5).
+Review is the home surface — a two-zone **decision tree** (▣ REMOVED · ◇ SUGGESTIONS
+Approve/Reject · ▸ Keeping-in-cleartext) in a **master-detail** split with a
+**side-by-side context pane** (ORIGINAL vs AFTER, from `placements`), a **filter** box for
+scale, and **miss-catching** below the tree (heuristic candidates + select-to-redact,
+UX-3/FR-16/FR-22). Send out = one Copy + fenced key with a one-time **"key is the secret"
+note** (US6); Restore = mirror + **unresolved-tag report**; empty = **scan evidence**.
+**Step D** added the teach-and-scale polish: **informed auto-apply** (FR-12, offered only
+after ≥1 reviewed run), **in-window declared-list editing** (US2 — "add to my list" is now
+a real cross-transcript term), the filter, and grayscale styling — backed by two new
+**pure** stores (`cloak_core/appstate.py` prefs, `cloak_core/declared_store.py` list; both
+host-path-injected). **Unsafe withholds** the scrubbed text from every copy path in every
+mode (PG7, tested). `cloak_core` stays pure. Next: **Phase 6** (lock PG1–PG8 in CI).
 
 **What Phase 0 delivered & verified:**
 - A loadable `BuzzPlugin` (`id="cloak"`, `version="0.0.0"`, no pip deps).
@@ -256,6 +258,8 @@ buzz-plugin/
 │   │   ├── sanitizer.py      # detect → decide → substitute → verify (single text)
 │   │   ├── transcript.py     # per-segment sanitize + merged ReviewItems (PG5); apply_review
 │   │   ├── persistence.py    # sidecar read/write (pure fs; path injected) (PG8)
+│   │   ├── appstate.py       # cross-transcript prefs (has_reviewed/auto-apply/teaching)
+│   │   ├── declared_store.py # growable in-window declared list (US2; unioned in pipeline)
 │   │   ├── verify.py         # VerificationGate — fail-closed re-check (FR-6/PG7)
 │   │   ├── restore.py        # reverse from the key (skips unmatched)
 │   │   └── tests/            # pure-core suite (no buzz/Qt; runs on system Python)
@@ -495,11 +499,13 @@ flowchart TB
 
 ---
 
-## 8. What's next — Phase 6 (guarantee hardening + DoD), then the deferred 5b polish
+## 8. What's next — Phase 6 (guarantee hardening + DoD)
 
-Phases 0–5b are done (§1): the guaranteed core, the suggestion tier, the host pipeline,
-the sidecar, and the **interactive** review/restore surface all work and are tested.
-Two tracks remain. Full spec:
+Phases 0–5b **and the full v2 UX rebuild (Steps A–D)** are done (§1): the guaranteed
+core, the suggestion tier, the host pipeline, the sidecar, and the rebuilt
+review/restore surface (three modes, master-detail context, miss-catching, first-use
+teaching, informed auto-apply, in-window declared-list editing, filter, styling) all
+work and are tested. Phase 6 is the main remaining phase. Full spec:
 [`../cloak-implementation-plan.md`](../cloak-implementation-plan.md) §Phase 6.
 
 **Phase 6 — lock the contract into CI (the main remaining phase):**
@@ -513,18 +519,24 @@ Two tracks remain. Full spec:
 - **User-facing README** (what Cloak guarantees, what it does NOT — NG2, "the key is the
   secret"); locale-completeness test (14 files, no empty values).
 
-**Deferred 5b polish (smaller, can interleave):**
-- **Informed auto-apply (FR-12):** an "apply suggestions automatically" option offered
-  **only after** ≥1 reviewed run. Needs a persistent "have-reviewed" flag (e.g. in
-  `meta` or a marker file) and pipeline wiring so future transcriptions auto-approve
-  suggestions. The config field exists conceptually but must stay gated, not naked.
-- **Suspicion lens (FR-22, lowest priority):** opt-in toggle that dims clearly-safe text
-  and raises contrast on likely-missed items; never required to finish a review.
-- **Richer detail view (UX-2)** and a **GUI styling pass** (windows are functional but
-  unstyled) — owed before a polished release. **A dedicated UX/GUI design pass is being
-  handed to a separate design agent** — brief at
-  [`../cloak-ux-design-brief.md`](../cloak-ux-design-brief.md) (covers IA, the three-tier
-  visual language, miss-catching/UX-3, the demo-vs-review window consolidation, etc.).
-  Fold its recommendations in before/with this styling work.
+**Step D wiring worth remembering (where the new state lives):**
+- Two **pure** stores under Cloak's data dir (host-path-injected, same pattern as
+  `persistence.py`): `cloak_core/appstate.py` — `preferences.json`
+  (`has_reviewed` / `auto_apply_suggestions` / `key_note_dismissed`); and
+  `cloak_core/declared_store.py` — `declared_terms.json` (the growable in-window list).
+- **Declared terms have two homes:** Buzz's plugin config (read-only to us) **∪** the
+  store. `build_detectors(config, data_dir=…)` unions them at text level, so an added
+  term takes effect on the **next** transcript. `sanitize_to_sidecar` resolves the data
+  dir (injected `base_dir` in tests, else `cloak_data_dir()`).
+- **FR-12 stays honest:** the pure core still holds suggestions PENDING (FR-9). The
+  *host* auto-approves them in `pipeline._auto_apply_suggestions` **only** when both
+  `auto_apply_suggestions` and `has_reviewed` are set — never a silent default. Meta
+  records `auto_applied_suggestions` (0 unless opted in). `has_reviewed` flips on the
+  first decision edit in the review window.
+
+**Smaller remaining items (optional / low priority):**
+- **Suspicion lens (FR-22, lowest priority):** an opt-in toggle that dims clearly-safe
+  text and raises contrast on likely-missed items. Miss-catching (Step C) covers the
+  core need; the dimming lens itself is still unbuilt and never required to finish a review.
 - Run `enable_suggestions` **end-to-end in a real Buzz** with `gliner` installed (the
   unit tests stub the model; the opt-in `CLOAK_RUN_MODEL_TEST=1` covers the real fetch).

@@ -1,4 +1,4 @@
-"""Sidecar-backed review window — Step B of the v2 UX build.
+"""Sidecar-backed review window — the v2 UX build (Steps A–D).
 
 **One window, three modes** (a persistent safety spine spans all three):
 
@@ -18,9 +18,11 @@ and when ``meta["clean"]`` is false the scrubbed text is **withheld** from every
 selectable widget with no reachable copy path (PG7/US9). Edits re-derive scrubbed +
 key (``apply_review``) and persist. The stored Buzz transcript is never touched.
 
-Deferred to Step C/D: the reverse "not touched — confirm these" miss-catching strip
-and select-to-redact (FR-16/FR-22), the bulk filter, informed auto-apply, first-use
-teaching, in-window declared-list management.
+Step D adds the polish that makes it teach and scale: the one-time "the key is the
+secret" note in Send out (US6); an informed auto-apply offer that only appears once
+the user has reviewed at least once (FR-12); in-window editing of the declared list,
+so "add to my list" becomes a real cross-transcript term (US2); a filter over the
+decision tree for the large-transcript case; and a grayscale-first stylesheet.
 """
 
 from __future__ import annotations
@@ -36,9 +38,13 @@ from PyQt6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
+    QListWidget,
     QPlainTextEdit,
     QPushButton,
     QSplitter,
@@ -52,13 +58,19 @@ from PyQt6.QtWidgets import (
 
 from cloak_core import (
     DecisionState,
+    Preferences,
     TrustTier,
+    add_declared_term,
     apply_review,
     build_manual_item,
     find_miss_candidates,
     next_free_placeholder,
     persistence,
+    read_declared_terms,
+    read_preferences,
+    remove_declared_term,
     restore,
+    write_preferences,
 )
 from cloak_host.i18n import gettext as _
 
@@ -88,6 +100,23 @@ _TOAST = "background:#26241f; color:#f4f2ee; padding:8px 14px; border:1px solid 
 _HL_ORIG = "QPlainTextEdit { background:#f3d9d4; }"
 _HL_SUB = "QPlainTextEdit { background:#dfe9df; }"
 _EVIDENCE = "background:#fbfbfa; border:1px solid #b9b6b1; padding:8px;"
+_NOTE = "background:#eaf0f2; color:#28414c; padding:6px;"
+
+# Grayscale-first window styling (design tokens from design/cloak_layout_skeleton.py).
+# Only the base chrome — semantic states (spine, walls, key header, highlights) keep
+# their own inline styles, which win over this sheet.
+_WINDOW_QSS = """
+QWidget#cloak_review_window { background:#f2f1ef; color:#1d1c1a; }
+QTreeWidget { background:#ffffff; border:1px solid #b9b6b1; }
+QTreeWidget::item { padding:3px 2px; }
+QTreeWidget::item:selected { background:#dde6f0; color:#1d1c1a; }
+QPlainTextEdit { background:#fbfbfa; border:1px solid #b9b6b1; }
+QPushButton { background:#dcdad5; border:1px solid #9a968f; padding:5px 12px; }
+QPushButton:disabled { color:#8a8680; }
+QToolButton { background:#dcdad5; border:1px solid #9a968f; padding:4px 10px; }
+QToolButton:checked { background:#dde6f0; border:1px solid #6f6b65; }
+QLineEdit { background:#ffffff; border:1px solid #b9b6b1; padding:3px 6px; }
+"""
 
 
 class ReviewWindow(QWidget):
@@ -101,6 +130,7 @@ class ReviewWindow(QWidget):
         self.setObjectName("cloak_review_window")
         self.setWindowTitle(_("Cloak — Review & restore"))
         self.resize(940, 780)
+        self.setStyleSheet(_WINDOW_QSS)
 
         if base_dir is None:
             try:
@@ -111,6 +141,7 @@ class ReviewWindow(QWidget):
                 logger.debug("Cloak: data dir unavailable; review opens empty.")
                 base_dir = ""
         self._base_dir = base_dir
+        self._prefs = read_preferences(base_dir) if base_dir else Preferences()
         self._sidecar = None
         self._current_dir = ""
         self._scrubbed_text = ""
@@ -209,7 +240,19 @@ class ReviewWindow(QWidget):
         self._approve_all_button = QPushButton(_("Approve everything detected"))
         self._approve_all_button.clicked.connect(self._approve_everything)
         bulk_row.addWidget(self._approve_all_button)
+        self._edit_list_button = QPushButton(_("Edit my declared list…"))
+        self._edit_list_button.clicked.connect(self._open_declared_list_editor)
+        bulk_row.addWidget(self._edit_list_button)
         bulk_row.addStretch(1)
+        # Informed auto-apply (FR-12): hidden until the user has reviewed at least
+        # once (see _refresh_auto_apply), then it offers to skip the held step.
+        self._auto_apply_check = QCheckBox(_("Auto-apply suggestions from now on"))
+        self._auto_apply_check.setToolTip(
+            _("Approve model suggestions automatically on future transcripts.")
+        )
+        self._auto_apply_check.toggled.connect(self._on_auto_apply_toggled)
+        self._auto_apply_check.setVisible(False)
+        bulk_row.addWidget(self._auto_apply_check)
         v.addLayout(bulk_row)
 
         self._review_body = QStackedWidget()
@@ -224,6 +267,11 @@ class ReviewWindow(QWidget):
         left = QWidget()
         left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(0, 0, 0, 0)
+        self._filter_edit = QLineEdit()
+        self._filter_edit.setPlaceholderText(_("Filter decisions…"))
+        self._filter_edit.setClearButtonEnabled(True)
+        self._filter_edit.textChanged.connect(self._apply_filter)
+        left_layout.addWidget(self._filter_edit)
         self._tree = QTreeWidget()
         self._tree.setColumnCount(4)
         self._tree.setHeaderLabels([_("item"), _("was"), _("×"), _("provenance")])
@@ -337,6 +385,9 @@ class ReviewWindow(QWidget):
         self._empty_copy_button = QPushButton(_("Copy the transcript"))
         self._empty_copy_button.clicked.connect(self._copy_scrubbed)
         row.addWidget(self._empty_copy_button)
+        empty_edit_list = QPushButton(_("Edit my declared list…"))
+        empty_edit_list.clicked.connect(self._open_declared_list_editor)
+        row.addWidget(empty_edit_list)
         row.addStretch(1)
         v.addLayout(row)
         v.addStretch(2)
@@ -382,6 +433,29 @@ class ReviewWindow(QWidget):
         key_header.setWordWrap(True)
         key_header.setStyleSheet(_KEY_HEADER)
         key.addWidget(key_header)
+
+        # First-use teaching (US6): shown once, dismissible, tied to Send out — not
+        # an upfront modal. Visibility is driven from prefs (see _refresh_key_note).
+        self._key_note = QFrame()
+        note_row = QHBoxLayout(self._key_note)
+        note_row.setContentsMargins(6, 4, 6, 4)
+        note_label = QLabel(
+            _(
+                "💡  First time here: remember — the key is the secret. Share the "
+                "scrubbed text freely; guard this key."
+            )
+        )
+        note_label.setWordWrap(True)
+        note_row.addWidget(note_label, 1)
+        self._key_note_dismiss = QToolButton()
+        self._key_note_dismiss.setText("✕")
+        self._key_note_dismiss.setToolTip(_("Got it — don't show this again"))
+        self._key_note_dismiss.setStyleSheet("border:none;")
+        self._key_note_dismiss.clicked.connect(self._dismiss_key_note)
+        note_row.addWidget(self._key_note_dismiss, 0, Qt.AlignmentFlag.AlignTop)
+        self._key_note.setStyleSheet(_NOTE)
+        key.addWidget(self._key_note)
+
         key.addWidget(
             QLabel(
                 _(
@@ -492,6 +566,8 @@ class ReviewWindow(QWidget):
         self._copy_button.setEnabled(False)
         self._key_edit.setPlainText("")
         self._reset_context()
+        self._refresh_auto_apply()
+        self._refresh_key_note()
         self._spine_label.setText(
             _("No sanitized transcripts yet. Transcribe with Cloak enabled.")
         )
@@ -517,6 +593,8 @@ class ReviewWindow(QWidget):
             self._empty_evidence.setText(self._scan_evidence(sidecar.meta))
         self._reset_context()
         self._populate_misses()
+        self._refresh_auto_apply()
+        self._refresh_key_note()
 
         # Send out — safe copy area vs the blocking wall (PG7: withhold when unsafe).
         self._sendout_safe.setVisible(clean)
@@ -614,6 +692,8 @@ class ReviewWindow(QWidget):
         self._group_cleartext.setExpanded(False)
         self._apply_tree_widths()
         self._update_row_actions()
+        if hasattr(self, "_filter_edit"):
+            self._apply_filter(self._filter_edit.text())
 
     def _add_group(
         self, text: str, *, bold: bool = False, italic: bool = False
@@ -816,6 +896,7 @@ class ReviewWindow(QWidget):
             terms = self._sidecar.meta.setdefault("manual_terms", [])
             if item.original not in terms:
                 terms.append(item.original)
+            self._add_to_declared_store(item.original)  # real cross-transcript term
         self._apply_edits()
         self._toast(_("Redacted “{}” everywhere.").format(item.original))
 
@@ -873,6 +954,7 @@ class ReviewWindow(QWidget):
         sidecar.key = key
         self._refresh_after_edit()
         self._persist()
+        self._mark_reviewed()  # any decision edit counts as a review (gates FR-12)
 
     def _persist(self) -> None:
         if not self._current_dir or self._sidecar is None:
@@ -888,6 +970,77 @@ class ReviewWindow(QWidget):
             persistence.write_sidecar(self._current_dir, sidecar, sidecar.meta)
         except OSError:
             logger.exception("Cloak: failed to persist review edits.")
+
+    # --- preferences · declared list · filter (Step D) ----------------------
+    def _save_prefs(self) -> None:
+        if not self._base_dir:
+            return
+        try:
+            write_preferences(self._base_dir, self._prefs)
+        except OSError:
+            logger.exception("Cloak: failed to persist preferences.")
+
+    def _mark_reviewed(self) -> None:
+        """Record that the user has reviewed at least once — the gate for FR-12."""
+        if not self._prefs.has_reviewed:
+            self._prefs.has_reviewed = True
+            self._save_prefs()
+            self._refresh_auto_apply()
+
+    def _refresh_auto_apply(self) -> None:
+        """Offer auto-apply only once a review has actually happened (FR-12)."""
+        self._auto_apply_check.setVisible(self._prefs.has_reviewed)
+        self._auto_apply_check.blockSignals(True)
+        self._auto_apply_check.setChecked(self._prefs.auto_apply_suggestions)
+        self._auto_apply_check.blockSignals(False)
+
+    def _on_auto_apply_toggled(self, checked: bool) -> None:
+        self._prefs.auto_apply_suggestions = checked
+        self._save_prefs()
+        self._toast(
+            _("Future suggestions will be applied automatically.")
+            if checked
+            else _("Future suggestions will be held for your review.")
+        )
+
+    def _refresh_key_note(self) -> None:
+        self._key_note.setVisible(not self._prefs.key_note_dismissed)
+
+    def _dismiss_key_note(self) -> None:
+        self._prefs.key_note_dismissed = True
+        self._save_prefs()
+        self._key_note.setVisible(False)
+
+    def _add_to_declared_store(self, term: str) -> None:
+        if not self._base_dir:
+            return
+        try:
+            add_declared_term(self._base_dir, term)
+        except OSError:
+            logger.exception("Cloak: failed to grow the declared list.")
+
+    def _open_declared_list_editor(self) -> None:
+        _DeclaredListEditor(self._base_dir, self).exec()
+
+    def _apply_filter(self, text: str) -> None:
+        """Hide decision rows that don't match ``text`` (zone headers always stay)."""
+        needle = text.strip().casefold()
+        for group in (
+            self._group_removed,
+            self._group_suggestions,
+            self._group_cleartext,
+        ):
+            for index in range(group.childCount()):
+                row = group.child(index)
+                row.setHidden(bool(needle) and needle not in self._row_haystack(row))
+
+    @staticmethod
+    def _row_haystack(row) -> str:
+        parts = [row.text(0), row.text(1), row.text(3)]
+        item = row.data(0, _USER_ROLE)
+        if item is not None:
+            parts += [item.original, item.type, item.placeholder]
+        return " ".join(parts).casefold()
 
     # --- send out / key / restore / clipboard -------------------------------
     def _on_preview_toggled(self, checked: bool) -> None:
@@ -959,3 +1112,73 @@ class ReviewWindow(QWidget):
         label.show()
         label.raise_()
         QTimer.singleShot(2400, label.hide)
+
+
+class _DeclaredListEditor(QDialog):
+    """In-window editor for Cloak's own declared-terms list (US2).
+
+    These are the terms Cloak manages itself — grown by "add to my list" while
+    catching a miss and by this editor — which the pipeline **unions** with the list
+    in Buzz's plugin settings on every future transcript. So editing here changes
+    what Cloak removes going forward, not just in the current transcript. Backed by
+    :mod:`cloak_core.declared_store`; ``base_dir`` is injected (tests pass a temp
+    dir). No-ops gracefully when there is no data directory.
+    """
+
+    def __init__(self, base_dir: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(_("Cloak — my declared list"))
+        self.resize(440, 380)
+        self._base_dir = base_dir
+
+        layout = QVBoxLayout(self)
+        intro = QLabel(
+            _(
+                "Terms Cloak always removes — on this and every future transcript. "
+                "Combined with the list in Buzz's plugin settings. One per line; "
+                "prefix with a category for clearer placeholders (e.g. 'person: Jane')."
+            )
+        )
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        self._list = QListWidget()
+        layout.addWidget(self._list, 1)
+
+        add_row = QHBoxLayout()
+        self._input = QLineEdit()
+        self._input.setPlaceholderText(_("Add a term, e.g. 'person: Jane'"))
+        self._input.returnPressed.connect(self._add)
+        add_row.addWidget(self._input, 1)
+        add_button = QPushButton(_("Add"))
+        add_button.clicked.connect(self._add)
+        add_row.addWidget(add_button)
+        self._remove_button = QPushButton(_("Remove selected"))
+        self._remove_button.clicked.connect(self._remove)
+        add_row.addWidget(self._remove_button)
+        layout.addLayout(add_row)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(self.reject)
+        buttons.accepted.connect(self.accept)
+        layout.addWidget(buttons)
+
+        self._reload()
+
+    def _reload(self) -> None:
+        self._list.clear()
+        if self._base_dir:
+            self._list.addItems(read_declared_terms(self._base_dir))
+
+    def _add(self) -> None:
+        term = self._input.text().strip()
+        if term and self._base_dir:
+            add_declared_term(self._base_dir, term)
+            self._input.clear()
+            self._reload()
+
+    def _remove(self) -> None:
+        item = self._list.currentItem()
+        if item is not None and self._base_dir:
+            remove_declared_term(self._base_dir, item.text())
+            self._reload()

@@ -8,7 +8,18 @@ safety-critical logic stays verifiable on its own (enforced by
 from __future__ import annotations
 
 from cloak_core import persistence
+from cloak_core.appstate import (
+    Preferences,
+    read_preferences,
+    write_preferences,
+)
 from cloak_core.categories import CATEGORIES, label_for
+from cloak_core.declared_store import (
+    add_declared_term,
+    read_declared_terms,
+    remove_declared_term,
+    write_declared_terms,
+)
 from cloak_core.detectors.base import Detector
 from cloak_core.detectors.declared import DeclaredListDetector, parse_declared_terms
 from cloak_core.detectors.pii import PII_TYPES, pii_detectors
@@ -65,7 +76,7 @@ from cloak_core.transcript import (
 from cloak_core.vault import Vault
 from cloak_core.verify import Verification, VerificationGate
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 __all__ = [
     "CATEGORIES",
@@ -87,6 +98,7 @@ __all__ = [
     "ModelSuggestionDetector",
     "PlaceholderScheme",
     "Placement",
+    "Preferences",
     "RawEntity",
     "ReviewItem",
     "SanitizationResult",
@@ -99,6 +111,7 @@ __all__ = [
     "Vault",
     "Verification",
     "VerificationGate",
+    "add_declared_term",
     "apply_review",
     "build_manual_item",
     "find_miss_candidates",
@@ -112,9 +125,14 @@ __all__ = [
     "parse_declared_terms",
     "persistence",
     "pii_detectors",
+    "read_declared_terms",
+    "read_preferences",
     "read_sidecar",
+    "remove_declared_term",
     "restore",
     "sanitize",
     "sanitize_transcript",
+    "write_declared_terms",
+    "write_preferences",
     "write_sidecar",
 ]
