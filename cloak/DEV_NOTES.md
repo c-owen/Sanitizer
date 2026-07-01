@@ -275,6 +275,10 @@ buzz-plugin/
 │   │   ├── review_window.py  # interactive Review & restore window (Phase 5a+5b)
 │   │   ├── demo_window.py    # Phase 1 in-Buzz sanitizer playground (manual demo)
 │   │   └── model_provider_buzz.py  # GLiNER ModelProvider; model fetched via Buzz (FR-13)
+│   ├── _vendor/              # bundled third-party (GLiNER) — on sys.path at runtime, no pip
+│   │   ├── gliner/           # GLiNER 0.2.27, pure-Python wheel unpacked verbatim
+│   │   ├── LICENSE           # Apache-2.0 (attribution)
+│   │   └── README.md         # what's vendored + why + how to update
 │   ├── locale/               # 14 bundled-locale JSON files (currently empty maps)
 │   ├── tests/                # host-integration tests (*_test.py)
 │   ├── pyproject.toml         # ruff config ONLY (dev-only; excluded from the zip)
@@ -424,6 +428,20 @@ Lint everything: `uvx ruff check cloak tools` and `uvx ruff format cloak tools`.
   detector logs and returns `[]`. The host adapter (`model_provider_buzz.py`) lazy-imports
   everything heavy and fetches the model via Buzz's downloader on first use (FR-13) — only
   exercised by the opt-in test (`CLOAK_RUN_MODEL_TEST=1`).
+- **GLiNER is vendored, not pip-installed (decision, 2026-07-01).** `gliner` is a small
+  **pure-Python** wheel and **all its runtime deps are already in Buzz** (`torch`,
+  `transformers`, `huggingface_hub`, `tqdm`, `onnxruntime`, `sentencepiece` — verified in
+  Buzz's `uv.lock`). So we bundle the ~1 MB of GLiNER code in **`cloak/_vendor/gliner/`**
+  (unpacked `gliner-0.2.27-py3-none-any.whl`, Apache-2.0) and put `cloak/_vendor` on
+  `sys.path` via `model_provider_buzz._ensure_vendor_on_path()` before `import gliner`.
+  Result: suggestions work in **every** Buzz deployment (frozen `.exe`, Snap, Flatpak,
+  source) with **no pip install** — only the model *weights* download, on demand, via
+  Buzz's HF downloader. **Rejected: `pip_dependencies=["gliner"]`** — Buzz installs deps
+  with `pip install --target <dir>` and **no `--no-deps`**, so it would re-pull torch
+  (GB) into the plugin dir and could shadow/break Buzz's own CUDA torch. Default model is
+  now the multilingual `urchade/gliner_multi-v2.1`. To update GLiNER: replace
+  `cloak/_vendor/gliner/` from the new wheel (see `cloak/_vendor/README.md`). `_vendor` is
+  excluded from ruff; the packager auto-includes it in the zip.
 - **KNOWN ISSUE — demo crashed Buzz on the *first* open, worked on the second.** Likely
   PyQt6's default of aborting the process on an unhandled exception inside a slot,
   triggered by a one-time first-run hiccup (lazy `cloak_core` import, or first-render

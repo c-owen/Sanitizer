@@ -122,8 +122,9 @@ class CloakPlugin(BuzzPlugin):
                 type=ConfigFieldType.BOOL,
                 default=False,
                 description=_(
-                    "Held for your review, never applied automatically. Downloads a "
-                    "small model on first use via Buzz; requires the 'gliner' package."
+                    "Held for your review, never applied automatically. Uses a local "
+                    "multilingual model, downloaded on first use via Buzz — no extra "
+                    "install needed (the model code ships with the plugin)."
                 ),
             ),
         ],

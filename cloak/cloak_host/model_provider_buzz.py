@@ -20,14 +20,19 @@ test (set ``CLOAK_RUN_MODEL_TEST=1``); unit tests inject a stub provider instead
 from __future__ import annotations
 
 import logging
+import os
+import sys
 from collections.abc import Sequence
 
 from cloak_core.detectors.suggest import RawEntity
 
 logger = logging.getLogger(__name__)
 
-# A small, CPU-friendly zero-shot NER model. Swappable behind the port (FR-14).
-DEFAULT_GLINER_REPO = "urchade/gliner_small-v2.1"
+# Multilingual zero-shot NER (mDeBERTa backbone) so suggestions work in whatever
+# language Buzz transcribed. Swappable behind the port (FR-14). The GLiNER *code* is
+# vendored in ``cloak/_vendor`` (no pip install); only these *weights* download, on
+# demand, via Buzz's own HuggingFace downloader (FR-13).
+DEFAULT_GLINER_REPO = "urchade/gliner_multi-v2.1"
 
 # Files to pull for a GLiNER repo. Generous on purpose (repos are small); tune if
 # the chosen model needs more. Drives both the Buzz download and the offline check.
@@ -41,6 +46,19 @@ _GLINER_PATTERNS = [
     "tokenizer*",
     "spm*",
 ]
+
+
+def _ensure_vendor_on_path() -> None:
+    """Put Cloak's bundled third-party dir on ``sys.path`` so the vendored GLiNER
+    imports with no pip install (see ``cloak/_vendor/``). No-op if already present
+    or absent. GLiNER is pure-Python and its heavy deps (torch/transformers/…) are
+    already in Buzz, so the import only needs the vendor directory on the path.
+    """
+    vendor = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_vendor"
+    )
+    if os.path.isdir(vendor) and vendor not in sys.path:
+        sys.path.insert(0, vendor)
 
 
 class _NullProgress:
@@ -103,7 +121,8 @@ class BuzzGlinerProvider:
         from buzz.model_loader import model_root_dir  # lazy host import
 
         self._ensure_downloaded()
-        from gliner import GLiNER  # lazy heavy import
+        _ensure_vendor_on_path()  # make the bundled gliner importable (no pip)
+        from gliner import GLiNER  # lazy heavy import (vendored in cloak/_vendor)
 
         model = GLiNER.from_pretrained(
             self._repo_id, cache_dir=model_root_dir, local_files_only=True

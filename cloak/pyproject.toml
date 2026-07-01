@@ -7,7 +7,7 @@
 [tool.ruff]
 line-length = 88
 target-version = "py312"  # Cloak runs inside Buzz's Python 3.12 environment
-extend-exclude = ["dist"]
+extend-exclude = ["dist", "_vendor"]  # _vendor holds unmodified third-party code
 
 [tool.ruff.lint]
 # E/W pycodestyle, F pyflakes, I isort, UP pyupgrade, B bugbear, C4 comprehensions.
