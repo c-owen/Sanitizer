@@ -325,6 +325,100 @@ def build_manual_item(
     )
 
 
+# --- on-demand model suggestions (windowed) ---------------------------------
+def _suggestion_windows(
+    segments: Sequence[SanitizedSegment], window_chars: int
+) -> list[str]:
+    """Join consecutive segments' *original* text into ~``window_chars`` blocks.
+
+    A suggestion model needs sentence-sized context — running it on each caption
+    fragment starves it (and is far slower). We give it windows instead; the spans
+    it returns are discarded and each surface is re-located per segment below, so a
+    phantom that a join might invent simply fails to locate and is dropped.
+    """
+    windows: list[str] = []
+    buffer: list[str] = []
+    size = 0
+    for segment in segments:
+        text = segment.original or ""
+        buffer.append(text)
+        size += len(text) + 1
+        if size >= window_chars:
+            windows.append(" ".join(buffer))
+            buffer, size = [], 0
+    if buffer:
+        windows.append(" ".join(buffer))
+    return windows
+
+
+def _locate_placements(
+    surface: str, segments: Sequence[SanitizedSegment]
+) -> list[Placement]:
+    """Every word-boundary-safe occurrence of ``surface`` across the segments."""
+    detector = DeclaredListDetector([surface])
+    placements: list[Placement] = []
+    for index, segment in enumerate(segments):
+        for detection in detector.detect(segment.original):
+            placements.append(
+                Placement(index, detection.span.start, detection.span.end)
+            )
+    return placements
+
+
+def suggest_items(
+    segments: Sequence[SanitizedSegment],
+    detector: Detector,
+    *,
+    known_canonicals: frozenset[str] | set[str] = frozenset(),
+    window_chars: int = 1200,
+) -> list[ReviewItem]:
+    """Run a suggestion ``detector`` over windowed transcript text → PENDING items.
+
+    The model runs over joined windows (context, speed); each proposed surface is then
+    **re-located precisely** in the segments (word-boundary safe), so every placement
+    is an exact, splice-safe span regardless of the model's own offsets. Returns one
+    :class:`ReviewItem` per distinct surface — ``SUGGESTED`` tier, ``PENDING`` state,
+    empty placeholder (allocated on approval, like any suggestion) — deduped against
+    ``known_canonicals`` (declared/PII/existing suggestions) and against itself.
+    Surfaces that don't actually occur in any segment (join phantoms) are dropped.
+    """
+    proposals: dict[str, tuple[str, str, str, str]] = {}
+    order: list[str] = []
+    for window in _suggestion_windows(segments, window_chars):
+        for detection in detector.detect(window):
+            canonical = detection.canonical
+            if canonical in known_canonicals or canonical in proposals:
+                continue
+            proposals[canonical] = (
+                detection.restore or detection.value,
+                detection.label,
+                detection.type,
+                detection.reason,
+            )
+            order.append(canonical)
+
+    items: list[ReviewItem] = []
+    for canonical in order:
+        surface, label, type_, reason = proposals[canonical]
+        placements = _locate_placements(surface, segments)
+        if not placements:
+            continue
+        items.append(
+            ReviewItem(
+                canonical=canonical,
+                placeholder="",
+                original=surface,
+                label=label,
+                type=type_,
+                tier=TrustTier.SUGGESTED,
+                reason=reason,
+                state=DecisionState.PENDING,
+                placements=placements,
+            )
+        )
+    return items
+
+
 # --- JSON (de)serialization for the sidecar ---------------------------------
 def segment_to_dict(segment: SanitizedSegment) -> dict:
     return {

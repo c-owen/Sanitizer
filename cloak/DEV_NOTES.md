@@ -26,12 +26,16 @@
 | **UX build — Step D (teach + scale)** | ✅ **done** (2026-06-30) — on branch `step-d-polish` | First-use key teaching (US6, dismiss-once); **informed auto-apply** (FR-12, gated on ≥1 reviewed run); in-window **declared-list editing** (US2 — "add to my list" now a real cross-transcript term); tree **filter**; grayscale styling. Two new pure stores: `appstate.py`, `declared_store.py`. |
 | **6 — Guarantee hardening + offline proof + DoD** | ✅ **done** (2026-06-30) — on branch `phase-6-guarantees` | **PG1–PG8** consolidated in one build-failing suite (`guarantees_test.py`), incl. the new **PG1 offline** (network primitives rigged to raise → guaranteed path still succeeds); **FR-14 extensibility** demo (new MAC detector + HTML format handler via public seams, no existing code touched); **locale-completeness** (14 files, no empty values); user-facing **README** (guarantees + limits + "key is the secret", NG2). |
 
-**Current state at a glance:** `cloak_core` **v0.6.0** · **244 tests pass** on system
-Python, **285** in `.venv-qt` (PyQt6 + hypothesis + markdown) · `ruff` clean.
+**Current state at a glance:** `cloak_core` **v0.7.0** · **247 tests pass** on system
+Python, **292** in `.venv-qt` (PyQt6 + hypothesis + markdown) · `ruff` clean.
 **Phases 0–6 + the full v2 UX (A–D) are done** — every product guarantee (PG1–PG8) is
 now backed by a build-failing test (`cloak/cloak_core/tests/guarantees_test.py`,
 including the offline PG1), FR-14 extensibility is demonstrated, locale files are
-completeness-checked, and there's a user-facing `cloak/README.md`.
+completeness-checked, and there's a user-facing `cloak/README.md`. **Suggestions are now
+on-demand:** a **"✨ Run suggestions" button** in the review window scans the loaded
+transcript with the vendored GLiNER model on a **worker thread** (windowed inference,
+download-on-first-use, failures shown — never a false "found nothing"); results land as
+PENDING rows to approve/reject. GLiNER is **vendored** (`cloak/_vendor`), so no pip.
 The **v2 UX (Steps A–D) is complete** (docs under `design/`; task brief
 `cloak-implementation-brief-for-claude-code.md`). One window, **three modes** (Review /
 Send out / Restore) under a persistent **safety spine** (verdict in word+glyph, UX-5).
@@ -558,9 +562,22 @@ test. Full spec: [`../cloak-implementation-plan.md`](../cloak-implementation-pla
   records `auto_applied_suggestions` (0 unless opted in). `has_reviewed` flips on the
   first decision edit in the review window.
 
+**On-demand suggestions — built (2026-07-01); one cleanup left.** The **"✨ Run
+suggestions" button** (`review_window.py`) scans the *loaded* transcript on a
+`_SuggestionWorker` (QThread) — `cloak_core.suggest_items` runs the detector over
+**joined ~1200-char windows** (context + speed) and **re-locates each surface** per
+segment (word-boundary safe → exact placements; join phantoms drop out). Results are
+PENDING rows; the worker distinguishes **model-failure from empty** via the detector's
+new `available`/`last_error` (so a broken model shows "Unavailable — …", never a false
+"found nothing"). Honors the FR-12 auto-apply pref. Suggestions are now **decoupled from
+transcription** — this is the intended path. **Cleanup owed:** `on_complete` still *can*
+run the old per-segment (frozen) suggestion path when `enable_suggestions` is on
+(default **off**, so dormant); retire that path + the `enable_suggestions` config field +
+`pipeline._auto_apply_suggestions` now that the button supersedes them (FR-12 lives in
+`_on_suggestions_ready`). Also: exercise the real GLiNER end-to-end in Buzz (opt-in
+`CLOAK_RUN_MODEL_TEST=1` covers the fetch+run).
+
 **Smaller remaining items (optional / low priority):**
 - **Suspicion lens (FR-22, lowest priority):** an opt-in toggle that dims clearly-safe
   text and raises contrast on likely-missed items. Miss-catching (Step C) covers the
   core need; the dimming lens itself is still unbuilt and never required to finish a review.
-- Run `enable_suggestions` **end-to-end in a real Buzz** with `gliner` installed (the
-  unit tests stub the model; the opt-in `CLOAK_RUN_MODEL_TEST=1` covers the real fetch).

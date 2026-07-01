@@ -66,7 +66,7 @@ class CloakPlugin(BuzzPlugin):
             "transcripts. Replace names, PII and codenames before sending text "
             "to a cloud LLM, then restore the originals from a local key."
         ),
-        version="0.6.0",
+        version="0.7.0",
         pip_dependencies=[],  # guaranteed path is dependency-free + offline
         config_fields=[
             ConfigField(

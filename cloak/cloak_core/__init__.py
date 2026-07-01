@@ -72,11 +72,12 @@ from cloak_core.transcript import (
     find_miss_candidates,
     next_free_placeholder,
     sanitize_transcript,
+    suggest_items,
 )
 from cloak_core.vault import Vault
 from cloak_core.verify import Verification, VerificationGate
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 
 __all__ = [
     "CATEGORIES",
@@ -132,6 +133,7 @@ __all__ = [
     "restore",
     "sanitize",
     "sanitize_transcript",
+    "suggest_items",
     "write_declared_terms",
     "write_preferences",
     "write_sidecar",

@@ -527,3 +527,74 @@ def test_clearing_the_filter_restores_all_rows(tmp_path, qtbot):
     window._filter_edit.setText("")
 
     assert all(not window._group_removed.child(i).isHidden() for i in range(2))
+
+
+# --- on-demand "Run suggestions" (worker thread) ----------------------------
+def _write_plain(directory):
+    # Nothing declared → clean, zero items; undeclared names for the model to find.
+    sanitization = sanitize_transcript(
+        [Seg(0, 1, "Call Sarah Chen"), Seg(1, 2, "about the Acme deal")],
+        [DeclaredListDetector(["Zzz"])],
+    )
+    persistence.write_sidecar(directory / "p", sanitization, _meta(sanitization))
+    return sanitization
+
+
+class _BoomProvider:
+    """A provider whose model always fails — to prove failure is surfaced, not empty."""
+
+    def model_present(self):
+        return True
+
+    def predict(self, text, labels):
+        raise RuntimeError("model exploded")
+
+
+def test_suggest_button_disabled_without_a_transcript(tmp_path, qtbot):
+    window = _new_window(tmp_path, qtbot)  # empty dir, nothing loaded
+    assert not window._suggest_button.isEnabled()
+
+
+def test_run_suggestions_adds_pending_items(tmp_path, qtbot):
+    _write_plain(tmp_path)
+    window = _new_window(tmp_path, qtbot)
+    window._provider_factory = lambda: _StubProvider("Sarah Chen", "person")
+
+    window._suggest_button.click()
+    qtbot.waitUntil(lambda: window._group_suggestions.childCount() > 0, timeout=5000)
+
+    row = window._group_suggestions.child(0)
+    assert "Sarah Chen" in row.text(0)
+    assert "sarah chen" in window._suggestion_buttons  # Approve/Reject offered
+    assert "Sarah Chen" in window._scrubbed_text  # held PENDING (FR-9), not removed
+
+
+def test_run_suggestions_surfaces_failure_instead_of_a_false_empty(tmp_path, qtbot):
+    _write_plain(tmp_path)
+    window = _new_window(tmp_path, qtbot)
+    window._provider_factory = lambda: _BoomProvider()
+
+    window._suggest_button.click()
+    qtbot.waitUntil(lambda: "exploded" in window._suggest_status.text(), timeout=5000)
+
+    # A broken model reads as "Unavailable — <reason>", never as "found nothing".
+    assert "Unavailable" in window._suggest_status.text()
+    assert window._group_suggestions.childCount() == 0
+    assert window._suggest_button.isEnabled()  # re-enabled after the run
+
+
+def test_run_suggestions_auto_applies_when_opted_in(tmp_path, qtbot):
+    from cloak_core import Preferences, write_preferences
+
+    write_preferences(
+        tmp_path, Preferences(has_reviewed=True, auto_apply_suggestions=True)
+    )
+    _write_plain(tmp_path)
+    window = _new_window(tmp_path, qtbot)
+    window._provider_factory = lambda: _StubProvider("Sarah Chen", "person")
+
+    window._suggest_button.click()
+    qtbot.waitUntil(lambda: "Sarah Chen" not in window._scrubbed_text, timeout=5000)
+
+    # Opted in after a review → the found suggestion is auto-approved and removed.
+    assert "Sarah Chen" in window._sidecar.key.entries.values()

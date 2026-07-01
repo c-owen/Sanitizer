@@ -22,7 +22,7 @@ def test_cloak_loads_via_buzz_loader():
 
     assert plugin.metadata.id == "cloak"
     assert plugin.metadata.name  # non-empty display name
-    assert plugin.metadata.version == "0.6.0"
+    assert plugin.metadata.version == "0.7.0"
 
 
 def test_cloak_is_a_buzz_plugin_instance():

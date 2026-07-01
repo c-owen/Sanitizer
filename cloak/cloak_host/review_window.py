@@ -31,7 +31,7 @@ import logging
 import os
 import re
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QAction, QFontDatabase, QKeySequence
 from PyQt6.QtWidgets import (
     QApplication,
@@ -70,6 +70,7 @@ from cloak_core import (
     read_preferences,
     remove_declared_term,
     restore,
+    suggest_items,
     write_preferences,
 )
 from cloak_host.i18n import gettext as _
@@ -119,6 +120,65 @@ QLineEdit { background:#ffffff; border:1px solid #b9b6b1; padding:3px 6px; }
 """
 
 
+def _default_suggestion_provider():
+    """Build the real (vendored GLiNER, via Buzz) suggestion provider. Imported here
+    so it stays lazy — the heavy path is only touched when the user runs suggestions.
+    """
+    from cloak_host.model_provider_buzz import BuzzGlinerProvider
+
+    return BuzzGlinerProvider()
+
+
+class _SuggestionWorker(QThread):
+    """Runs the suggestion model off the GUI thread (download + inference are slow).
+
+    Emits ``status`` updates, then either ``ready`` with the found PENDING items or
+    ``failed`` with a human-readable reason. Never raises into the event loop — any
+    failure (model unavailable, download error, …) becomes a ``failed`` signal, so
+    "no suggestions" is never silent. ``provider_factory`` is injected (tests pass a
+    stub); the default builds the vendored-GLiNER provider.
+    """
+
+    ready = pyqtSignal(list)
+    failed = pyqtSignal(str)
+    status = pyqtSignal(str)
+
+    def __init__(self, segments, known_canonicals, provider_factory) -> None:
+        super().__init__()
+        self._segments = segments
+        self._known = known_canonicals
+        self._provider_factory = provider_factory
+
+    def run(self) -> None:  # executes on the worker thread
+        try:
+            from cloak_core import ModelSuggestionDetector
+
+            provider = self._provider_factory()
+            present = getattr(provider, "model_present", None)
+            if callable(present) and not present():
+                self.status.emit(
+                    _(
+                        "Downloading the suggestion model (first run — this can take a "
+                        "while)…"
+                    )
+                )
+            else:
+                self.status.emit(_("Analysing the transcript…"))
+            detector = ModelSuggestionDetector(provider)
+            items = suggest_items(
+                self._segments, detector, known_canonicals=self._known
+            )
+            # The detector swallows model failures (FR-9) — so distinguish "the model
+            # broke" from "it ran and found nothing", never conflating them.
+            if detector.last_error:
+                self.failed.emit(detector.last_error)
+            else:
+                self.ready.emit(items)
+        except Exception as exc:  # noqa: BLE001 - surfaced to the user, never silent
+            logger.exception("Cloak: running suggestions failed")
+            self.failed.emit(f"{type(exc).__name__}: {exc}")
+
+
 class ReviewWindow(QWidget):
     """Presents and edits one transcription's sidecar across Review/Send/Restore.
 
@@ -153,6 +213,9 @@ class ReviewWindow(QWidget):
         self._suggestion_buttons: dict[str, tuple[QPushButton, QPushButton]] = {}
         self._reapprove_buttons: dict[str, QPushButton] = {}
         self._mono = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+        # On-demand suggestions run on a worker thread; tests inject a stub provider.
+        self._provider_factory = _default_suggestion_provider
+        self._suggest_worker: _SuggestionWorker | None = None
 
         # Keyboard-accessible reject for guaranteed rows (context menu + shortcut).
         self._keep_action = QAction(_("Keep in cleartext"), self)
@@ -243,6 +306,21 @@ class ReviewWindow(QWidget):
         self._edit_list_button = QPushButton(_("Edit my declared list…"))
         self._edit_list_button.clicked.connect(self._open_declared_list_editor)
         bulk_row.addWidget(self._edit_list_button)
+        # On-demand model suggestions — opt-in and independent of declared removal
+        # (a user may want one, the other, or neither). Runs on a worker thread.
+        self._suggest_button = QPushButton(_("✨ Run suggestions"))
+        self._suggest_button.setToolTip(
+            _(
+                "Scan this transcript with the local model for undeclared "
+                "names / orgs / places. Held for your review — nothing is removed "
+                "automatically."
+            )
+        )
+        self._suggest_button.clicked.connect(self._run_suggestions)
+        bulk_row.addWidget(self._suggest_button)
+        self._suggest_status = QLabel("")
+        self._suggest_status.setStyleSheet("color:#6b6864;")
+        bulk_row.addWidget(self._suggest_status)
         bulk_row.addStretch(1)
         # Informed auto-apply (FR-12): hidden until the user has reviewed at least
         # once (see _refresh_auto_apply), then it offers to skip the held step.
@@ -565,6 +643,8 @@ class ReviewWindow(QWidget):
         self._preview_edit.setPlainText("")
         self._copy_button.setEnabled(False)
         self._key_edit.setPlainText("")
+        self._suggest_button.setEnabled(False)  # nothing loaded to scan
+        self._suggest_status.setText("")
         self._reset_context()
         self._refresh_auto_apply()
         self._refresh_key_note()
@@ -602,6 +682,9 @@ class ReviewWindow(QWidget):
         self._preview_edit.setPlainText(self._scrubbed_text if clean else "")
         self._copy_button.setEnabled(clean and bool(self._scrubbed_text))
         self._empty_copy_button.setEnabled(clean and bool(self._scrubbed_text))
+        # Suggestions can run on any loaded transcript (even a "nothing found" one —
+        # the model may still spot a name the guaranteed detectors don't).
+        self._suggest_button.setEnabled(self._suggest_worker is None)
 
         self._key_text = "\n".join(
             f"{placeholder}  =  {original}"
@@ -946,14 +1029,20 @@ class ReviewWindow(QWidget):
         else:
             item.state = DecisionState.REJECTED
 
-    def _apply_edits(self) -> None:
-        """Re-derive scrubbed + key from the item states, refresh, and persist."""
+    def _rederive_and_persist(self) -> None:
+        """Re-derive scrubbed + key from the item states, refresh, and persist —
+        without marking the run reviewed (used when items change but the user hasn't
+        made a decision yet, e.g. suggestions just arrived)."""
         sidecar = self._sidecar
         segments, key = apply_review(sidecar.segments, sidecar.items)
         sidecar.segments = segments
         sidecar.key = key
         self._refresh_after_edit()
         self._persist()
+
+    def _apply_edits(self) -> None:
+        """A user decision edit: re-derive/persist, then mark the run reviewed."""
+        self._rederive_and_persist()
         self._mark_reviewed()  # any decision edit counts as a review (gates FR-12)
 
     def _persist(self) -> None:
@@ -970,6 +1059,59 @@ class ReviewWindow(QWidget):
             persistence.write_sidecar(self._current_dir, sidecar, sidecar.meta)
         except OSError:
             logger.exception("Cloak: failed to persist review edits.")
+
+    # --- on-demand suggestions (worker thread) ------------------------------
+    def _run_suggestions(self) -> None:
+        """Scan the current transcript with the local model, off the GUI thread."""
+        if self._sidecar is None or self._suggest_worker is not None:
+            return
+        self._suggest_button.setEnabled(False)
+        self._suggest_status.setText(_("Starting…"))
+        known = {i.canonical for i in self._sidecar.items}
+        worker = _SuggestionWorker(
+            list(self._sidecar.segments), known, self._provider_factory
+        )
+        worker.status.connect(self._suggest_status.setText)
+        worker.ready.connect(self._on_suggestions_ready)
+        worker.failed.connect(self._on_suggestions_failed)
+        worker.finished.connect(self._suggestions_cleanup)
+        self._suggest_worker = worker
+        worker.start()
+
+    def _on_suggestions_ready(self, items) -> None:
+        if self._sidecar is None:
+            self._suggest_status.setText("")
+            return
+        known = {i.canonical for i in self._sidecar.items}
+        fresh = [item for item in items if item.canonical not in known]
+        self._sidecar.items.extend(fresh)
+        # Informed auto-apply (FR-12): if opted in after ≥1 review, approve them now;
+        # otherwise they wait PENDING for the user's click (FR-9 default).
+        if fresh and self._prefs.auto_apply_suggestions and self._prefs.has_reviewed:
+            for item in fresh:
+                self._set_item_approved(item, True)
+        self._rederive_and_persist()
+        if fresh:
+            self._suggest_status.setText(
+                _("Found {n} — see below.").format(n=len(fresh))
+            )
+            self._toast(
+                _("✨ {n} suggestion(s) added for your review.").format(n=len(fresh))
+            )
+        else:
+            self._suggest_status.setText(_("No new suggestions found."))
+
+    def _on_suggestions_failed(self, reason: str) -> None:
+        # Never silent — surface *why* on screen, not only in the log.
+        self._suggest_status.setText(_("Unavailable — {reason}").format(reason=reason))
+        self._toast(_("Couldn't run suggestions: {reason}").format(reason=reason))
+
+    def _suggestions_cleanup(self) -> None:
+        self._suggest_button.setEnabled(True)
+        worker = self._suggest_worker
+        self._suggest_worker = None
+        if worker is not None:
+            worker.deleteLater()
 
     # --- preferences · declared list · filter (Step D) ----------------------
     def _save_prefs(self) -> None:

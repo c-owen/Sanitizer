@@ -53,6 +53,35 @@ def _declared(*terms):
     return [DeclaredListDetector(list(terms))]
 
 
+class _StubSuggest:
+    """A stand-in suggestion detector: flags fixed surfaces wherever they appear in
+    the text it is handed (a window), like the real model would."""
+
+    tier = TrustTier.SUGGESTED
+
+    def __init__(self, *surfaces):  # each: (surface, label, type)
+        self._surfaces = surfaces
+
+    def detect(self, text):
+        out = []
+        for surface, label, type_ in self._surfaces:
+            index = text.find(surface)
+            if index >= 0:
+                out.append(
+                    Detection(
+                        span=Span(index, index + len(surface)),
+                        value=surface,
+                        type=type_,
+                        label=label,
+                        tier=TrustTier.SUGGESTED,
+                        reason="model suggestion",
+                        canonical=surface.strip().casefold(),
+                        restore=surface,
+                    )
+                )
+        return out
+
+
 def test_segment_timing_is_preserved():
     segments = [Seg(0, 1000, "Hi Jane"), Seg(1000, 2500, "Bye Jane")]
     result = sanitize_transcript(segments, _declared("Jane"))
@@ -194,3 +223,53 @@ def test_build_manual_item_none_when_absent():
         [Seg(0, 1, "nothing here")], _declared("Zzz")
     ).segments
     assert build_manual_item("Karen", segments, existing_placeholders=set()) is None
+
+
+# --- on-demand windowed suggestions -----------------------------------------
+def test_suggest_items_locates_a_windowed_find_across_segments():
+    from cloak_core.transcript import suggest_items
+
+    segments = sanitize_transcript(
+        [Seg(0, 1, "Councillor Sarah Chen spoke"), Seg(1, 2, "then Sarah Chen left")],
+        _declared("Zzz"),
+    ).segments
+    items = suggest_items(
+        segments,
+        _StubSuggest(("Sarah Chen", "PERSON", "person")),
+        known_canonicals=set(),
+    )
+    assert len(items) == 1
+    item = items[0]
+    assert item.original == "Sarah Chen"
+    assert item.tier is TrustTier.SUGGESTED
+    assert item.state is DecisionState.PENDING
+    assert item.placeholder == ""  # allocated only on approval
+    assert item.count == 2  # both occurrences re-located, spans exact
+
+
+def test_suggest_items_skips_known_canonicals():
+    from cloak_core.transcript import suggest_items
+
+    segments = sanitize_transcript(
+        [Seg(0, 1, "Sarah Chen met Bob")], _declared("Zzz")
+    ).segments
+    detector = _StubSuggest(
+        ("Sarah Chen", "PERSON", "person"), ("Bob", "PERSON", "person")
+    )
+    items = suggest_items(segments, detector, known_canonicals={"bob"})
+    assert {i.original for i in items} == {"Sarah Chen"}  # Bob already handled
+
+
+def test_suggest_items_drops_phantoms_not_in_any_single_segment():
+    from cloak_core.transcript import suggest_items
+
+    # "Sarah Chen" only exists across the window join, in no single segment.
+    segments = sanitize_transcript(
+        [Seg(0, 1, "Sarah"), Seg(1, 2, "Chen")], _declared("Zzz")
+    ).segments
+    items = suggest_items(
+        segments,
+        _StubSuggest(("Sarah Chen", "PERSON", "person")),
+        known_canonicals=set(),
+    )
+    assert items == []  # re-location fails → dropped (no invalid placement)

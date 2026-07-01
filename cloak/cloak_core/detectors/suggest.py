@@ -140,11 +140,20 @@ class ModelSuggestionDetector:
             self._category_map.update(
                 {key.lower(): value for key, value in category_map.items()}
             )
+        # Observability. This tier degrades to ``[]`` on any provider failure so the
+        # guaranteed path is never affected — but a silent ``[]`` is indistinguishable
+        # from "the model ran and found nothing". These record *why*, so a caller (the
+        # on-demand "Run suggestions" flow) can tell the user a missing/broken model
+        # apart from an empty result, instead of reporting a false "all clear".
+        self.available = True
+        self.last_error: str | None = None
 
     def detect(self, text: str) -> list[Detection]:
         try:
             entities = self._provider.predict(text, self._labels)
-        except Exception:  # noqa: BLE001 - degrade gracefully if the model fails
+        except Exception as exc:  # noqa: BLE001 - degrade gracefully if model fails
+            self.available = False
+            self.last_error = f"{type(exc).__name__}: {exc}"
             logger.exception("suggestion model failed; continuing without suggestions")
             return []
 
