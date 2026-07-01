@@ -154,3 +154,43 @@ def test_next_free_placeholder_skips_used_and_letters_vs_numbers():
         next_free_placeholder(existing, "PERSON") == "{{PERSON-C}}"
     )  # entities letter
     assert next_free_placeholder(existing, "EMAIL") == "{{EMAIL-1}}"  # others number
+
+
+# --- miss-catching (UX-3 / FR-22 / FR-16) -----------------------------------
+def test_find_miss_candidates_ranks_by_frequency():
+    from cloak_core.transcript import find_miss_candidates
+
+    candidates = find_miss_candidates("Karen met Karen and Bobby")
+    assert candidates[0].surface == "Karen"  # count 2 → first
+    assert candidates[0].count == 2
+    assert {c.surface for c in candidates} == {"Karen", "Bobby"}
+
+
+def test_find_miss_candidates_excludes_known_and_placeholders():
+    from cloak_core.transcript import find_miss_candidates
+
+    candidates = find_miss_candidates("{{PERSON-A}} met Karen and Bob", known={"bob"})
+    assert {c.surface for c in candidates} == {"Karen"}  # placeholder + Bob excluded
+
+
+def test_build_manual_item_redacts_all_occurrences():
+    from cloak_core.transcript import build_manual_item
+
+    segments = sanitize_transcript(
+        [Seg(0, 1, "Karen and Karen"), Seg(1, 2, "then Karen")], _declared("Zzz")
+    ).segments
+    item = build_manual_item("Karen", segments, existing_placeholders=set())
+    assert item is not None
+    assert item.tier is TrustTier.DECLARED
+    assert item.state is DecisionState.APPROVED
+    assert item.count == 3
+    assert item.original == "Karen"
+
+
+def test_build_manual_item_none_when_absent():
+    from cloak_core.transcript import build_manual_item
+
+    segments = sanitize_transcript(
+        [Seg(0, 1, "nothing here")], _declared("Zzz")
+    ).segments
+    assert build_manual_item("Karen", segments, existing_placeholders=set()) is None

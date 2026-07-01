@@ -102,6 +102,22 @@ def _write_empty(directory):
     return sanitization
 
 
+def _write_with_miss(directory):
+    # "Karen" is entity-shaped but undeclared/unflagged → a miss candidate (UX-3).
+    sanitization = sanitize_transcript(
+        [Seg(0, 1, "Call Jane about Karen"), Seg(1, 2, "Karen again")],
+        [DeclaredListDetector(["Jane"])],
+    )
+    persistence.write_sidecar(directory / "6", sanitization, _meta(sanitization))
+    return sanitization
+
+
+def _miss_buttons(window):
+    from PyQt6.QtWidgets import QPushButton
+
+    return window._miss_container.findChildren(QPushButton)
+
+
 def _new_window(tmp_path, qtbot):
     from cloak_host.review_window import ReviewWindow
 
@@ -348,6 +364,42 @@ def test_context_is_withheld_when_unsafe(tmp_path, qtbot):
     window._tree.setCurrentItem(window._group_removed.child(0))
     assert window._ctx_withheld.isVisibleTo(window)
     assert not window._ctx_body.isVisibleTo(window)
+
+
+# --- miss-catching + select-to-redact (UX-3 / FR-16) ------------------------
+def test_miss_strip_surfaces_unflagged_names(tmp_path, qtbot):
+    _write_with_miss(tmp_path)
+    window = _new_window(tmp_path, qtbot)
+
+    assert window._miss_strip.isVisibleTo(window)
+    labels = [b.text() for b in _miss_buttons(window)]
+    assert any("Karen" in label for label in labels)
+
+
+def test_redacting_a_miss_removes_it_everywhere_and_records_term(tmp_path, qtbot):
+    _write_with_miss(tmp_path)
+    window = _new_window(tmp_path, qtbot)
+
+    button = next(b for b in _miss_buttons(window) if "Karen" in b.text())
+    button.click()
+
+    assert "Karen" not in window._scrubbed_text  # removed everywhere
+    assert "Karen" in {i.original for i in window._sidecar.items}  # now a decision
+    assert window._sidecar.meta["manual_terms"] == ["Karen"]  # add-to-list recorded
+    assert all(
+        "Karen" not in b.text() for b in _miss_buttons(window)
+    )  # no longer offered
+
+
+def test_context_redact_uses_the_selection(tmp_path, qtbot):
+    _write_with_miss(tmp_path)
+    window = _new_window(tmp_path, qtbot)
+
+    window._ctx_orig.setPlainText("Karen")
+    window._ctx_orig.selectAll()
+    window._ctx_redact_button.click()
+
+    assert "Karen" not in window._scrubbed_text
 
 
 # --- UX-5: tier + state readable without colour -----------------------------

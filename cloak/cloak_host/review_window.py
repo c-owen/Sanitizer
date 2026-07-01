@@ -34,6 +34,7 @@ from PyQt6.QtGui import QAction, QFontDatabase, QKeySequence
 from PyQt6.QtWidgets import (
     QApplication,
     QButtonGroup,
+    QCheckBox,
     QComboBox,
     QFrame,
     QHBoxLayout,
@@ -53,6 +54,8 @@ from cloak_core import (
     DecisionState,
     TrustTier,
     apply_review,
+    build_manual_item,
+    find_miss_candidates,
     next_free_placeholder,
     persistence,
     restore,
@@ -229,11 +232,35 @@ class ReviewWindow(QWidget):
         self._tree.addAction(self._keep_action)
         self._tree.itemSelectionChanged.connect(self._on_selection_changed)
         left_layout.addWidget(self._tree, 1)
+        left_layout.addWidget(self._build_miss_strip())
         split.addWidget(left)
 
         split.addWidget(self._build_context_pane())
         split.setSizes([560, 360])
         return split
+
+    def _build_miss_strip(self) -> QWidget:
+        """The reverse 'not touched — confirm these' strip (UX-3 / FR-22).
+
+        Populated with entity-shaped candidates still in cleartext; clicking one
+        redacts it everywhere. Reads 'candidates to confirm', never 'all clear' —
+        so it is simply hidden when there are none.
+        """
+        self._miss_strip = QFrame()
+        self._miss_strip.setStyleSheet("QFrame { background:#fbfbfa; }")
+        row = QHBoxLayout(self._miss_strip)
+        row.setContentsMargins(6, 4, 6, 4)
+        row.addWidget(
+            QLabel(_("⚲ Not touched, but entity-shaped — confirm these are fine:"))
+        )
+        self._miss_container = QWidget()
+        self._miss_row = QHBoxLayout(self._miss_container)
+        self._miss_row.setContentsMargins(0, 0, 0, 0)
+        self._miss_row.setSpacing(4)
+        row.addWidget(self._miss_container)
+        row.addStretch(1)
+        self._miss_strip.setVisible(False)
+        return self._miss_strip
 
     def _build_context_pane(self) -> QWidget:
         pane = QWidget()
@@ -256,6 +283,18 @@ class ReviewWindow(QWidget):
         self._ctx_sub = self._read_only(70)
         self._ctx_sub.setStyleSheet(_HL_SUB)
         body.addWidget(self._ctx_sub)
+
+        # Select-to-redact: catching a miss and growing the list are one gesture
+        # (FR-16). Select text in ORIGINAL above, then redact every occurrence.
+        body.addWidget(self._hline())
+        redact_row = QHBoxLayout()
+        self._ctx_redact_button = QPushButton(_("Redact selected text everywhere"))
+        self._ctx_redact_button.clicked.connect(self._redact_selection)
+        redact_row.addWidget(self._ctx_redact_button)
+        self._ctx_add_checkbox = QCheckBox(_("also add to my declared list"))
+        redact_row.addWidget(self._ctx_add_checkbox)
+        redact_row.addStretch(1)
+        body.addLayout(redact_row)
         body.addStretch(1)
         v.addWidget(self._ctx_body)
 
@@ -443,6 +482,8 @@ class ReviewWindow(QWidget):
         self._key_text = ""
         self._clean = True
         self._populate_tree([])
+        self._clear_layout(self._miss_row)
+        self._miss_strip.setVisible(False)
         self._review_body.setCurrentIndex(0)
         self._review_block.setVisible(False)
         self._sendout_safe.setVisible(True)
@@ -475,6 +516,7 @@ class ReviewWindow(QWidget):
         if is_empty:
             self._empty_evidence.setText(self._scan_evidence(sidecar.meta))
         self._reset_context()
+        self._populate_misses()
 
         # Send out — safe copy area vs the blocking wall (PG7: withhold when unsafe).
         self._sendout_safe.setVisible(clean)
@@ -657,6 +699,12 @@ class ReviewWindow(QWidget):
             self._populate_context(item)
 
     def _reset_context(self) -> None:
+        # Clear the side-by-side first, so an original fragment can never linger
+        # across a load into an unsafe transcript (PG7).
+        self._ctx_orig.setPlainText("")
+        self._ctx_sub.setPlainText("")
+        self._ctx_meta.setText("")
+        self._ctx_prompt.setText("")
         if not self._clean:
             self._ctx_body.setVisible(False)
             self._ctx_withheld.setVisible(True)
@@ -664,9 +712,6 @@ class ReviewWindow(QWidget):
         self._ctx_withheld.setVisible(False)
         self._ctx_body.setVisible(True)
         self._ctx_meta.setText(_("Select a decision to see it in context."))
-        self._ctx_prompt.setText("")
-        self._ctx_orig.setPlainText("")
-        self._ctx_sub.setPlainText("")
 
     def _populate_context(self, item) -> None:
         self._ctx_withheld.setVisible(False)
@@ -715,6 +760,64 @@ class ReviewWindow(QWidget):
             f"{prefix}«{text[start:end]}»{suffix}",
             f"{prefix}«{placeholder}»{suffix}",
         )
+
+    # --- miss-catching / redact (UX-3 / FR-16) ------------------------------
+    def _populate_misses(self) -> None:
+        self._clear_layout(self._miss_row)
+        if self._sidecar is None or not self._clean or not self._scrubbed_text:
+            self._miss_strip.setVisible(False)
+            return
+        known = {i.canonical for i in self._sidecar.items}
+        candidates = find_miss_candidates(self._scrubbed_text, known=known, limit=4)
+        for candidate in candidates:
+            button = QPushButton(f"{candidate.surface} ({candidate.count})")
+            button.setToolTip(_("Redact this everywhere and add it to your list"))
+            button.clicked.connect(
+                lambda _c=False, s=candidate.surface: self._redact_surface(s, add=True)
+            )
+            self._miss_row.addWidget(button)
+        self._miss_strip.setVisible(bool(candidates))
+
+    @staticmethod
+    def _clear_layout(layout) -> None:
+        while layout.count():
+            child = layout.takeAt(0)
+            widget = child.widget()
+            if widget is not None:
+                widget.setParent(None)  # remove now; deleteLater alone lingers
+                widget.deleteLater()
+
+    def _redact_selection(self) -> None:
+        self._redact_surface(
+            self._ctx_orig.textCursor().selectedText(),
+            add=self._ctx_add_checkbox.isChecked(),
+        )
+
+    def _redact_surface(self, surface: str, *, add: bool = False) -> None:
+        if self._sidecar is None:
+            return
+        surface = surface.strip("«»").strip()
+        if not surface:
+            self._toast(_("Select some text in ORIGINAL to redact first."))
+            return
+        known = {i.canonical for i in self._sidecar.items}
+        item = build_manual_item(
+            surface,
+            self._sidecar.segments,
+            existing_placeholders={
+                i.placeholder for i in self._sidecar.items if i.placeholder
+            },
+        )
+        if item is None or item.canonical in known:
+            self._toast(_("Nothing new to redact for “{}”.").format(surface))
+            return
+        self._sidecar.items.append(item)
+        if add:
+            terms = self._sidecar.meta.setdefault("manual_terms", [])
+            if item.original not in terms:
+                terms.append(item.original)
+        self._apply_edits()
+        self._toast(_("Redacted “{}” everywhere.").format(item.original))
 
     # --- editing ------------------------------------------------------------
     def _approve_item(self, item) -> None:

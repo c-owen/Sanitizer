@@ -51,11 +51,14 @@ from cloak_core.placeholders import (
 from cloak_core.restore import restore
 from cloak_core.sanitizer import sanitize
 from cloak_core.transcript import (
+    MissCandidate,
     Placement,
     ReviewItem,
     SanitizedSegment,
     TranscriptSanitization,
     apply_review,
+    build_manual_item,
+    find_miss_candidates,
     next_free_placeholder,
     sanitize_transcript,
 )
@@ -79,6 +82,7 @@ __all__ = [
     "FormatHandler",
     "Key",
     "MarkdownHandler",
+    "MissCandidate",
     "ModelProvider",
     "ModelSuggestionDetector",
     "PlaceholderScheme",
@@ -96,6 +100,8 @@ __all__ = [
     "Verification",
     "VerificationGate",
     "apply_review",
+    "build_manual_item",
+    "find_miss_candidates",
     "format_handler",
     "has_sidecar",
     "is_ascii_safe",

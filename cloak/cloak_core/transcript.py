@@ -13,11 +13,13 @@ Host-independent: operates on plain segment-like inputs (anything with
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Protocol
 
 from cloak_core.detectors.base import Detector
+from cloak_core.detectors.declared import DeclaredListDetector
 from cloak_core.model import (
     DecisionState,
     Detection,
@@ -27,6 +29,12 @@ from cloak_core.model import (
 from cloak_core.placeholders import DEFAULT_SCHEME, PlaceholderScheme
 from cloak_core.sanitizer import sanitize
 from cloak_core.vault import Vault
+
+_PLACEHOLDER_RE = re.compile(r"\{\{[^{}]+\}\}")
+# A "light" entity shape: capitalized runs (one or more Capitalized words). The
+# inter-word gap is horizontal-only ([ \t]) so a run never spans a segment-join
+# newline (which would invent a phrase present in no single segment).
+_CAP_RUN_RE = re.compile(r"\b[A-Z][a-zA-Z]{2,}(?:[ \t]+[A-Z][a-zA-Z]{2,})*\b")
 
 
 class SegmentLike(Protocol):
@@ -230,6 +238,91 @@ def next_free_placeholder(
         if candidate not in existing:
             return candidate
         index += 1
+
+
+# --- miss-catching (UX-3 / FR-22 / FR-16) -----------------------------------
+@dataclass(frozen=True)
+class MissCandidate:
+    """An entity-shaped token still in cleartext that Cloak did NOT remove — a
+    candidate for the user to confirm (never an "all clear"). Recall-only."""
+
+    surface: str
+    count: int
+
+
+def _canonical(surface: str) -> str:
+    return re.sub(r"\s+", " ", surface).strip().casefold()
+
+
+def find_miss_candidates(
+    text: str,
+    *,
+    known: frozenset[str] | set[str] = frozenset(),
+    limit: int = 8,
+) -> list[MissCandidate]:
+    """Capitalized runs still present in ``text`` that aren't already flagged.
+
+    A *light heuristic*, not a detector: it surfaces "candidates to confirm," to make
+    catching a miss as cheap as approving a find (UX-3), and must never be read as a
+    guarantee. Placeholders are ignored; any candidate whose casefold is in ``known``
+    (already a declared/PII/suggested item) is skipped. Sorted by frequency, then name.
+    """
+    masked = _PLACEHOLDER_RE.sub(" ", text)
+    seen: dict[str, list] = {}
+    order: list[str] = []
+    for match in _CAP_RUN_RE.finditer(masked):
+        surface = match.group()
+        canonical = _canonical(surface)
+        if canonical in known:
+            continue
+        if canonical not in seen:
+            seen[canonical] = [surface, 0]
+            order.append(canonical)
+        seen[canonical][1] += 1
+    candidates = [MissCandidate(seen[c][0], seen[c][1]) for c in order]
+    candidates.sort(key=lambda mc: (-mc.count, mc.surface.casefold()))
+    return candidates[:limit]
+
+
+def build_manual_item(
+    surface: str,
+    segments: Sequence[SanitizedSegment],
+    *,
+    existing_placeholders: set[str],
+    label: str = "TERM",
+) -> ReviewItem | None:
+    """Build an APPROVED, declared-tier :class:`ReviewItem` that redacts ``surface``
+    everywhere it occurs (word-boundary safe), or ``None`` if it never occurs.
+
+    Used by the review UI's select-to-redact / miss-catching (FR-16): the user turns
+    an un-removed token into a removal. Reuses the declared detector so the match is
+    substring-safe, and allocates a fresh, non-colliding placeholder.
+    """
+    detector = DeclaredListDetector([surface])
+    placements: list[Placement] = []
+    canonical = _canonical(surface)
+    original = surface.strip()
+    for index, segment in enumerate(segments):
+        for detection in detector.detect(segment.original):
+            placements.append(
+                Placement(index, detection.span.start, detection.span.end)
+            )
+            canonical = detection.canonical
+            original = detection.restore
+    if not placements:
+        return None
+    placeholder = next_free_placeholder(existing_placeholders, label)
+    return ReviewItem(
+        canonical=canonical,
+        placeholder=placeholder,
+        original=original,
+        label=label,
+        type="term",
+        tier=TrustTier.DECLARED,
+        reason="redacted by you",
+        state=DecisionState.APPROVED,
+        placements=placements,
+    )
 
 
 # --- JSON (de)serialization for the sidecar ---------------------------------
