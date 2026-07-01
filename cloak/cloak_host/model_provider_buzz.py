@@ -118,15 +118,24 @@ class BuzzGlinerProvider:
         return self._model
 
     def _load_model(self):
-        from buzz.model_loader import model_root_dir  # lazy host import
-
         self._ensure_downloaded()
         _ensure_vendor_on_path()  # make the bundled gliner importable (no pip)
+        # Load from the resolved *local snapshot directory*, not the repo id. GLiNER's
+        # from_pretrained skips ALL hub access when handed a path that exists (its
+        # _download_model does ``Path(model_id).exists()``), and reads the config,
+        # weights and *bundled* tokenizer straight from that dir. Passing the repo id
+        # instead reaches for huggingface.co even with local_files_only set — GLiNER's
+        # own offline handling is leaky (it re-resolves the backbone tokenizer online),
+        # which is the "couldn't connect to huggingface.co" failure users hit offline.
+        local_path = self._snapshot_path(local_files_only=True)
         from gliner import GLiNER  # lazy heavy import (vendored in cloak/_vendor)
 
-        model = GLiNER.from_pretrained(
-            self._repo_id, cache_dir=model_root_dir, local_files_only=True
-        )
+        try:
+            model = GLiNER.from_pretrained(local_path, local_files_only=True)
+        except TypeError:
+            # Some GLiNER versions' from_pretrained doesn't accept local_files_only;
+            # the path is already local, so the load stays offline regardless.
+            model = GLiNER.from_pretrained(local_path)
         try:
             model.to("cpu")
         except Exception:  # noqa: BLE001 - some builds manage device placement
