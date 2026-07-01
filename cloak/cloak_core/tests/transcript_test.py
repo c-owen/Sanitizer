@@ -1,0 +1,156 @@
+"""Transcript-level sanitization — per-segment timing, shared placeholders, merge.
+
+Covers PG5 (timing preserved), cross-segment placeholder consistency, the merged
+review items, fail-closed across segments, and the apply_review re-derivation used
+when the user edits decisions (Phase 5b) — plus JSON round-tripping for the sidecar.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from cloak_core.detectors.declared import DeclaredListDetector
+from cloak_core.model import DecisionState, Detection, Span, TrustTier
+from cloak_core.transcript import (
+    apply_review,
+    item_from_dict,
+    item_to_dict,
+    sanitize_transcript,
+    segment_from_dict,
+    segment_to_dict,
+)
+
+
+@dataclass
+class Seg:
+    start: int
+    end: int
+    text: str
+
+
+class _MissesSecondDetector:
+    """Detects only the first 'SECRET' in a text — a recall miss the gate catches."""
+
+    def detect(self, text):
+        index = text.find("SECRET")
+        if index < 0:
+            return []
+        return [
+            Detection(
+                span=Span(index, index + 6),
+                value="SECRET",
+                type="secret",
+                label="SECRET",
+                tier=TrustTier.PII,
+                reason="pattern",
+                canonical="secret",
+                restore="SECRET",
+            )
+        ]
+
+
+def _declared(*terms):
+    return [DeclaredListDetector(list(terms))]
+
+
+def test_segment_timing_is_preserved():
+    segments = [Seg(0, 1000, "Hi Jane"), Seg(1000, 2500, "Bye Jane")]
+    result = sanitize_transcript(segments, _declared("Jane"))
+    assert [(s.start, s.end) for s in result.segments] == [(0, 1000), (1000, 2500)]
+
+
+def test_same_value_shares_placeholder_across_segments():
+    segments = [Seg(0, 1, "Jane here"), Seg(1, 2, "and Jane there")]
+    result = sanitize_transcript(segments, _declared("Jane"))
+    assert len(result.items) == 1
+    item = result.items[0]
+    assert item.count == 2
+    assert {p.segment for p in item.placements} == {0, 1}
+    assert result.segments[0].scrubbed == "{{TERM-1}} here"
+    assert result.segments[1].scrubbed == "and {{TERM-1}} there"
+
+
+def test_scrubbed_text_joins_segments():
+    segments = [Seg(0, 1, "Call Jane"), Seg(1, 2, "or Bob")]
+    result = sanitize_transcript(segments, _declared("Jane", "Bob"))
+    assert result.scrubbed_text == "Call {{TERM-1}}\nor {{TERM-2}}"
+    assert result.original_text == "Call Jane\nor Bob"
+
+
+def test_distinct_segments_distinct_placeholders_and_counts():
+    segments = [Seg(0, 1, "Jane"), Seg(1, 2, "Bob"), Seg(2, 3, "Jane again")]
+    result = sanitize_transcript(segments, _declared("Jane", "Bob"))
+    assert {i.original: i.count for i in result.items} == {"Jane": 2, "Bob": 1}
+    assert result.removed_items == 2
+
+
+def test_clean_is_false_if_any_segment_leaks():
+    # The transcript is clean only if every segment is: a recall miss in segment 1
+    # must fail the whole transcript closed (clean=False), collecting the survivor.
+    segments = [Seg(0, 1, "nothing here"), Seg(1, 2, "SECRET and SECRET")]
+    result = sanitize_transcript(segments, [_MissesSecondDetector()])
+    assert result.clean is False
+    assert any(s.value == "SECRET" for s in result.survivors)
+
+
+def test_clean_transcript_stays_clean():
+    segments = [Seg(0, 1, "Jane"), Seg(1, 2, "nothing")]
+    result = sanitize_transcript(segments, _declared("Jane"))
+    assert result.clean is True
+    assert result.survivors == []
+
+
+def test_apply_review_reproduces_sanitization():
+    segments = [Seg(0, 1, "Jane and Jane"), Seg(1, 2, "then Bob")]
+    result = sanitize_transcript(segments, _declared("Jane", "Bob"))
+    rebuilt, key = apply_review(result.segments, result.items)
+    assert [s.scrubbed for s in rebuilt] == [s.scrubbed for s in result.segments]
+    assert key.entries == result.key.entries
+
+
+def test_apply_review_reflects_a_rejected_item():
+    segments = [Seg(0, 1, "Jane and Bob")]
+    result = sanitize_transcript(segments, _declared("Jane", "Bob"))
+    jane = next(i for i in result.items if i.original == "Jane")
+    jane.state = DecisionState.REJECTED
+    rebuilt, key = apply_review(result.segments, result.items)
+    assert "Jane" in rebuilt[0].scrubbed  # kept in cleartext now
+    assert jane.placeholder not in key.entries  # and dropped from the key
+    assert "Bob" not in rebuilt[0].scrubbed  # Bob still removed
+
+
+def test_item_json_round_trip():
+    segments = [Seg(0, 1, "Jane"), Seg(1, 2, "Jane")]
+    item = sanitize_transcript(segments, _declared("Jane")).items[0]
+    restored = item_from_dict(item_to_dict(item))
+    assert restored.original == "Jane"
+    assert restored.tier is TrustTier.DECLARED
+    assert restored.state is DecisionState.APPROVED
+    assert [(p.segment, p.start, p.end) for p in restored.placements] == [
+        (p.segment, p.start, p.end) for p in item.placements
+    ]
+
+
+def test_segment_json_round_trip():
+    segment = sanitize_transcript([Seg(0, 5, "Jane")], _declared("Jane")).segments[0]
+    restored = segment_from_dict(segment_to_dict(segment))
+    assert (restored.start, restored.end) == (0, 5)
+    assert restored.original == "Jane"
+    assert restored.scrubbed == "{{TERM-1}}"
+
+
+def test_empty_transcript_is_empty():
+    result = sanitize_transcript([], _declared("Jane"))
+    assert result.items == []
+    assert result.scrubbed_text == ""
+    assert result.clean is True
+
+
+def test_next_free_placeholder_skips_used_and_letters_vs_numbers():
+    from cloak_core.transcript import next_free_placeholder
+
+    existing = {"{{PERSON-A}}", "{{PERSON-B}}"}
+    assert (
+        next_free_placeholder(existing, "PERSON") == "{{PERSON-C}}"
+    )  # entities letter
+    assert next_free_placeholder(existing, "EMAIL") == "{{EMAIL-1}}"  # others number
