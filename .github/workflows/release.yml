@@ -1,0 +1,50 @@
+name: Release
+
+# Publishes dist/sanitizer.zip as a GitHub Release asset whenever a version tag
+# (v*) is pushed -- this is what makes "download the latest zip from the repo"
+# actually true; pushing source alone does not, since dist/ is gitignored.
+#
+# To cut a release: git tag v0.7.1 && git push origin v0.7.1
+#
+# Runs a lightweight pre-publish gate (the pure sanitizer_core guarantee suite
+# only -- no buzz clone, no Qt libs, seconds not minutes) so a broken core can
+# never ship as a release asset. The fuller host-integration suite already gates
+# every push to main via ci.yml; this is a final, fast sanity check specific to
+# the release action itself, not a duplicate of the full CI job.
+
+"on":
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # to create the Release and upload the asset
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out Sanitizer
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test + package dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest hypothesis markdown
+
+      - name: Pre-publish gate -- pure core guarantees only
+        run: python -m pytest sanitizer/sanitizer_core -q
+
+      - name: Build the plugin zip
+        run: python tools/package.py
+
+      - name: Publish the GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/sanitizer.zip
+          generate_release_notes: true
