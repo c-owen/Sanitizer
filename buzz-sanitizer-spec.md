@@ -1,6 +1,6 @@
 # Transcript Sanitizer — Product Brief
 
-**Plugin (working title):** Cloak — a reversible, offline sensitive-information sanitizer for Buzz
+**Plugin (working title):** Sanitizer — a reversible, offline sensitive-information sanitizer for Buzz
 **Status:** Draft v0.3 — product planning, for handoff to engineering (blocking questions resolved)
 **Document type:** Product brief (problem, goals, scope, guarantees, principles)
 **Audience:** maintainers / PM. Hands off to the implementing agent, which will pull the current Buzz repo and produce the technical design.

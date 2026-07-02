@@ -1,11 +1,11 @@
-"""Tiny demo of Cloak's host-independent core — sanitize, show the key, restore.
+"""Tiny demo of Sanitizer's host-independent core — sanitize, show the key, restore.
 
 No Buzz, no Qt, no ML deps. Run with plain system Python::
 
     python tools/demo_core.py
     python tools/demo_core.py --terms "Jane,Bob" --text "Jane called Bob about Jane"
 
-This exercises the same `cloak_core` code the plugin will use, so you can watch
+This exercises the same `sanitizer_core` code the plugin will use, so you can watch
 declared terms become consistent placeholders, see the (secret) key, and confirm
 the round trip restores the original.
 """
@@ -18,10 +18,10 @@ import re
 import sys
 
 sys.path.insert(
-    0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "cloak")
+    0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "sanitizer")
 )
 
-from cloak_core import (  # noqa: E402
+from sanitizer_core import (  # noqa: E402
     DeclaredListDetector,
     DecisionState,
     ModelSuggestionDetector,
@@ -36,7 +36,7 @@ class _HeuristicProvider:
     """A crude, offline stand-in for the real zero-shot model — for demoing the
     suggestion tier only. Flags capitalized words as possible names so you can see
     suggestions surface as PENDING (held for review, never auto-applied). The real
-    plugin uses ``cloak_host.model_provider_buzz`` instead; this ships nowhere.
+    plugin uses ``sanitizer_host.model_provider_buzz`` instead; this ships nowhere.
     """
 
     _WORD = re.compile(r"\b[A-Z][a-z]{2,}\b")
@@ -78,7 +78,7 @@ def main() -> None:
     except (AttributeError, ValueError):
         pass
 
-    parser = argparse.ArgumentParser(description="Demo Cloak's sanitization core.")
+    parser = argparse.ArgumentParser(description="Demo Sanitizer's sanitization core.")
     parser.add_argument("--terms", help="Comma-separated declared terms.")
     parser.add_argument("--text", help="Text to sanitize.")
     parser.add_argument(

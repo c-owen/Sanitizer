@@ -1,10 +1,10 @@
-# Handoff: Cloak — sensitive-information sanitizer (PyQt6 plugin window)
+# Handoff: Sanitizer — sensitive-information sanitizer (PyQt6 plugin window)
 
 ## Overview
-Cloak is an **offline, reversible sensitive-information sanitizer** that runs as a plugin inside a
-desktop transcription app. After a transcript is produced, Cloak replaces sensitive items with
+Sanitizer is an **offline, reversible sensitive-information sanitizer** that runs as a plugin inside a
+desktop transcription app. After a transcript is produced, Sanitizer replaces sensitive items with
 reversible placeholders (`{{PERSON-A}}`, `{{EMAIL-1}}`, `{{PROJECT-A}}`…). The user copies the
-scrubbed text into a cloud LLM, pastes the reply back, and Cloak restores the real values from a
+scrubbed text into a cloud LLM, pastes the reply back, and Sanitizer restores the real values from a
 **local key**.
 
 **The mental model the UI must teach: _the key is the secret._** The scrubbed text is safe to share;
@@ -15,7 +15,7 @@ This bundle is the approved **design test-fit**. Build the real thing in **PyQt6
 ---
 
 ## About the design file
-`Cloak Test-Fit.html` is a **design reference**, not production code. It is an HTML stand-in for the
+`Sanitizer Test-Fit.html` is a **design reference**, not production code. It is an HTML stand-in for the
 PyQt6 window. **Do not ship the HTML or wrap it in a WebView.** Reimplement it as native PyQt6
 widgets. The HTML was deliberately constrained to widgets that map 1:1 onto Qt (see the widget map
 at the bottom of the page and the table below), so the translation is mechanical.
@@ -81,7 +81,7 @@ cleartext) · plus the window-level **Unsafe** condition.
 | Region | PyQt6 widget |
 |---|---|
 | Window | `QMainWindow` |
-| Menu bar (`File Edit View Cloak Help`, Cloak active) | `QMenuBar` |
+| Menu bar (`File Edit View Sanitizer Help`, Sanitizer active) | `QMenuBar` |
 | Toolbar: transcript selector | `QComboBox` |
 | Toolbar: demo-state toggle (prototype-only) | `QButtonGroup` of checkable `QToolButton` |
 | Safety spine | `QFrame` + `QLabel` (word + glyph) |
@@ -273,5 +273,5 @@ No rounded "card" web styling, no gradients, no drop shadows. Plain bordered pan
 None. The UI is plain widgets + unicode glyphs only.
 
 ## Files in this bundle
-- `Cloak Test-Fit.html` — the offline, interactive design reference (the source of truth for look +
+- `Sanitizer Test-Fit.html` — the offline, interactive design reference (the source of truth for look +
   behavior). Open it, drive the tabs and the demo-state toggle, screenshot, and match.

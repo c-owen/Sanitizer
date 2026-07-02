@@ -1,4 +1,4 @@
-"""Package the Cloak plugin folder into ``dist/cloak.zip`` for local serving.
+"""Package the Sanitizer plugin folder into ``dist/sanitizer.zip`` for local serving.
 
 The archive places ``plugin.py`` at its root (Buzz's loader also accepts a
 single wrapping directory). Development-only files — tests, tooling config,
@@ -6,7 +6,7 @@ notes and caches — are excluded so the distributable stays lean.
 
 Usage::
 
-    python tools/package.py                  # -> dist/cloak.zip
+    python tools/package.py                  # -> dist/sanitizer.zip
     python tools/package.py --output X.zip    # custom output path
 """
 
@@ -17,8 +17,8 @@ import zipfile
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-_PLUGIN_DIR = _REPO_ROOT / "cloak"
-_DEFAULT_OUTPUT = _REPO_ROOT / "dist" / "cloak.zip"
+_PLUGIN_DIR = _REPO_ROOT / "sanitizer"
+_DEFAULT_OUTPUT = _REPO_ROOT / "dist" / "sanitizer.zip"
 
 # Directory names pruned anywhere in the tree.
 _EXCLUDE_DIRS = frozenset(
@@ -30,7 +30,7 @@ _EXCLUDE_ROOT_FILES = frozenset({"pyproject.toml", "DEV_NOTES.md"})
 _EXCLUDE_SUFFIXES = frozenset({".pyc", ".pyo"})
 # Specific vendored subtrees the plugin never imports — kept verbatim in-repo (so the
 # `_vendor/README.md` update procedure stays "unpack the wheel"), but pruned from the
-# distributable. `gliner/serve` is a Ray/HTTP inference server (binds localhost); Cloak
+# distributable. `gliner/serve` is a Ray/HTTP inference server (binds localhost); Sanitizer
 # only does in-process `GLiNER.from_pretrained(...).predict_entities(...)`, so shipping a
 # network server in an offline privacy tool is needless attack surface + weight.
 _EXCLUDE_REL_DIRS = frozenset({("_vendor", "gliner", "serve")})
@@ -78,7 +78,9 @@ def build_zip(plugin_dir: Path = _PLUGIN_DIR, output: Path = _DEFAULT_OUTPUT) ->
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Package the Cloak plugin as a zip.")
+    parser = argparse.ArgumentParser(
+        description="Package the Sanitizer plugin as a zip."
+    )
     parser.add_argument(
         "--output",
         type=Path,

@@ -1,4 +1,4 @@
-# Upstream host app — its own git repo (chidiwilliams/buzz), never modified by Cloak.
+# Upstream host app — its own git repo (chidiwilliams/buzz), never modified by Sanitizer.
 # Kept on disk (tests import it) but NOT tracked here.
 /buzz/
 

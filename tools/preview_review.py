@@ -1,4 +1,4 @@
-"""Open the real Cloak ReviewWindow with sample data — a dev preview (no Buzz).
+"""Open the real Sanitizer ReviewWindow with sample data — a dev preview (no Buzz).
 
 The review UI is a normal top-level Qt window backed by a sidecar directory, so it
 runs standalone. This harness writes a few sample sidecars into a throwaway temp dir
@@ -25,20 +25,20 @@ from dataclasses import dataclass
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
-for _path in (_REPO_ROOT / "cloak", _REPO_ROOT / "buzz"):
+for _path in (_REPO_ROOT / "sanitizer", _REPO_ROOT / "buzz"):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 
 from PyQt6.QtWidgets import QApplication  # noqa: E402
 
-from cloak_core import persistence  # noqa: E402
-from cloak_core.detectors.declared import DeclaredListDetector  # noqa: E402
-from cloak_core.detectors.pii import pii_detectors  # noqa: E402
-from cloak_core.detectors.suggest import (  # noqa: E402
+from sanitizer_core import persistence  # noqa: E402
+from sanitizer_core.detectors.declared import DeclaredListDetector  # noqa: E402
+from sanitizer_core.detectors.pii import pii_detectors  # noqa: E402
+from sanitizer_core.detectors.suggest import (  # noqa: E402
     ModelSuggestionDetector,
     RawEntity,
 )
-from cloak_core.transcript import sanitize_transcript  # noqa: E402
+from sanitizer_core.transcript import sanitize_transcript  # noqa: E402
 
 
 @dataclass
@@ -121,11 +121,11 @@ def _seed(base: Path) -> None:
 
 
 def main() -> None:
-    base = Path(tempfile.mkdtemp(prefix="cloak-preview-"))
+    base = Path(tempfile.mkdtemp(prefix="sanitizer-preview-"))
     _seed(base)
 
     app = QApplication(sys.argv)
-    from cloak_host.review_window import ReviewWindow
+    from sanitizer_host.review_window import ReviewWindow
 
     window = ReviewWindow(base_dir=str(base))
     window.show()
@@ -133,7 +133,7 @@ def main() -> None:
     window.activateWindow()
     # ASCII-only console output — a Windows cp1252 console throws on fancy glyphs,
     # and that would kill the process before app.exec() ever runs.
-    print(f"Cloak review preview - sample sidecars in:\n  {base}")
+    print(f"Sanitizer review preview - sample sidecars in:\n  {base}")
     print("Close the window to exit. (Temp dir is left behind for inspection.)")
     sys.exit(app.exec())
 
