@@ -812,3 +812,69 @@ def test_triage_filters_do_not_persist_or_mutate_the_sidecar(tmp_path, qtbot):
     # Filtering is a view, not an edit: every suggestion is still PENDING on disk.
     reopened = _new_window(tmp_path, qtbot)
     assert _pending_names(reopened) == {"Alice", "Carol", "Globex"}  # default view
+
+
+def test_triage_controls_hidden_when_there_are_no_suggestions(tmp_path, qtbot):
+    _write_sidecar(tmp_path)  # declared-only sidecar, zero suggestions
+    window = _new_window(tmp_path, qtbot)
+
+    assert not window._sugg_controls.isVisibleTo(window)
+    assert window._group_suggestions.childCount() == 0
+
+
+def test_approved_suggestion_stays_visible_when_its_type_is_toggled_off(
+    tmp_path, qtbot
+):
+    # Approving a suggestion is a decision; toggling its type must not erase that
+    # record (you'd lose the only in-tree evidence of what was removed).
+    _write_scored_suggestions(tmp_path)
+    window = _new_window(tmp_path, qtbot)
+
+    window._suggestion_buttons["alice"][0].click()  # approve Alice (person)
+    window._type_checks["person"].setChecked(False)  # focus away from people
+
+    assert _find_suggestion_row(window, "Alice") is not None  # approved → still shown
+    assert _find_suggestion_row(window, "Carol") is None  # pending person → hidden
+
+
+def test_spine_cautions_when_a_guaranteed_item_is_kept_in_cleartext(tmp_path, qtbot):
+    _write_sidecar(tmp_path)  # Jane declared + removed → clean
+    window = _new_window(tmp_path, qtbot)
+    assert "SAFE TO COPY" in window._spine_label.text()  # baseline
+
+    window._tree.setCurrentItem(window._group_removed.child(0))  # the Jane row
+    window._keep_action.trigger()  # override: keep the declared item in cleartext
+
+    spine = window._spine_label.text()
+    assert "kept in cleartext" in spine  # no longer a bare "SAFE TO COPY"
+    assert "1" in spine
+    window.set_mode("sendout")
+    assert window._copy_button.isEnabled()  # still the user's choice to copy
+
+
+def test_stale_suggestion_result_is_discarded_not_applied(tmp_path, qtbot):
+    # A scan that started on transcript A must never land on transcript B if the user
+    # switched in between (its placements index A's segments — applying corrupts B).
+    from cloak_core import DecisionState, TrustTier
+    from cloak_core.transcript import Placement, ReviewItem
+
+    _write_sidecar(tmp_path)
+    window = _new_window(tmp_path, qtbot)
+    before = len(window._sidecar.items)
+    window._suggest_source_dir = window._current_dir + "__other"  # simulate a switch
+
+    ghost = ReviewItem(
+        canonical="ghost",
+        placeholder="",
+        original="Ghost",
+        label="PERSON",
+        type="person",
+        tier=TrustTier.SUGGESTED,
+        reason="x",
+        state=DecisionState.PENDING,
+        placements=[Placement(0, 0, 5)],
+    )
+    window._on_suggestions_ready([ghost])
+
+    assert len(window._sidecar.items) == before  # untouched
+    assert _find_suggestion_row(window, "Ghost") is None

@@ -77,7 +77,7 @@ from cloak_core.transcript import (
 from cloak_core.vault import Vault
 from cloak_core.verify import Verification, VerificationGate
 
-__version__ = "0.7.0"
+__version__ = "0.7.1"
 
 __all__ = [
     "CATEGORIES",

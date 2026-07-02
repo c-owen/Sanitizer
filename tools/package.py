@@ -28,11 +28,19 @@ _EXCLUDE_DIRS = frozenset(
 _EXCLUDE_ROOT_FILES = frozenset({"pyproject.toml", "DEV_NOTES.md"})
 # File suffixes excluded anywhere.
 _EXCLUDE_SUFFIXES = frozenset({".pyc", ".pyo"})
+# Specific vendored subtrees the plugin never imports — kept verbatim in-repo (so the
+# `_vendor/README.md` update procedure stays "unpack the wheel"), but pruned from the
+# distributable. `gliner/serve` is a Ray/HTTP inference server (binds localhost); Cloak
+# only does in-process `GLiNER.from_pretrained(...).predict_entities(...)`, so shipping a
+# network server in an offline privacy tool is needless attack surface + weight.
+_EXCLUDE_REL_DIRS = frozenset({("_vendor", "gliner", "serve")})
 
 
 def _should_include(path: Path, plugin_dir: Path) -> bool:
     rel = path.relative_to(plugin_dir)
     if any(part in _EXCLUDE_DIRS for part in rel.parts):
+        return False
+    if any(rel.parts[: len(prefix)] == prefix for prefix in _EXCLUDE_REL_DIRS):
         return False
     if path.suffix in _EXCLUDE_SUFFIXES:
         return False

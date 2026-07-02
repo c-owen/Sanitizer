@@ -60,3 +60,18 @@ def test_build_zip_uses_forward_slashes(tmp_path: Path):
 
     # Zip entries must use POSIX separators to extract cross-platform.
     assert not any("\\" in n for n in names), names
+
+
+def test_build_zip_prunes_unused_vendored_server_but_keeps_imports(tmp_path: Path):
+    package = _load_package_module()
+    output = package.build_zip(output=tmp_path / "cloak.zip")
+
+    with zipfile.ZipFile(output) as archive:
+        names = archive.namelist()
+
+    # The vendored GLiNER HTTP/Ray inference server is never imported → not shipped.
+    assert not any(n.startswith("_vendor/gliner/serve/") for n in names), names
+    # But GLiNER's core and the subpackages model.py imports at load time must ship.
+    assert "_vendor/gliner/model.py" in names, names
+    assert any(n.startswith("_vendor/gliner/training/") for n in names), names
+    assert any(n.startswith("_vendor/gliner/evaluation/") for n in names), names

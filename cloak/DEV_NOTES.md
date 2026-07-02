@@ -26,17 +26,20 @@
 | **UX build — Step D (teach + scale)** | ✅ **done** (2026-06-30) — on branch `step-d-polish` | First-use key teaching (US6, dismiss-once); **informed auto-apply** (FR-12, gated on ≥1 reviewed run); in-window **declared-list editing** (US2 — "add to my list" now a real cross-transcript term); tree **filter**; grayscale styling. Two new pure stores: `appstate.py`, `declared_store.py`. |
 | **6 — Guarantee hardening + offline proof + DoD** | ✅ **done** (2026-06-30) — on branch `phase-6-guarantees` | **PG1–PG8** consolidated in one build-failing suite (`guarantees_test.py`), incl. the new **PG1 offline** (network primitives rigged to raise → guaranteed path still succeeds); **FR-14 extensibility** demo (new MAC detector + HTML format handler via public seams, no existing code touched); **locale-completeness** (14 files, no empty values); user-facing **README** (guarantees + limits + "key is the secret", NG2). |
 | **Suggestions — on-demand button** | ✅ **done** (2026-07-01) — CONFIRMED in real Buzz | "✨ Run suggestions" button; vendored GLiNER (`_vendor`, no pip); worker thread + windowed inference; base-backbone offline-load fix (§6). Surfaced the ~222-item problem. |
-| **Step E — run-once, triage-interactively** | ✅ **built on branch `step-e-triage`** (2026-07-01, pending review) | The ~222 answer: keep GLiNER's **confidence** on each item; a live **triage panel** (confidence slider + live count + type toggles + min-mentions + sort) filtering the computed set client-side (no re-run); **non-linear** review — SUGGESTIONS grouped by type with per-type + shown-wide **bulk** approve/reject, multi-select + Ctrl+Return/Ctrl+Backspace. `cloak_core` stays pure. |
+| **Step E — run-once, triage-interactively** | ✅ **done — v0.7.1 release** (2026-07-01) | The ~222 answer: keep GLiNER's **confidence** on each item; a live **triage panel** (confidence slider + live count + type toggles + min-mentions + sort) filtering the computed set client-side (no re-run); **non-linear** review — SUGGESTIONS grouped by type with per-type + shown-wide **bulk** approve/reject, multi-select + Ctrl+Return/Ctrl+Backspace. `cloak_core` stays pure. Shipped after a 4-track repo audit (security/packaging/correctness/docs) — fixes below. |
 
-**Current state at a glance:** `cloak_core` **v0.7.0** · **251 tests pass** on system
-Python, **306** in `.venv-qt` (PyQt6 + hypothesis + markdown) · `ruff` clean.
-The **~222-suggestions problem is solved** on branch `step-e-triage` (pending your
-review/merge): one model run, then an interactive **triage** surface — GLiNER's
-confidence is kept per item; a **live control panel** (confidence slider + "N of M
-shown" count + person/org/place/project toggles + min-mentions + sort) filters the
-computed set **client-side with no re-run**; the SUGGESTIONS zone is **grouped by
-type** with per-type and shown-wide **bulk** approve/reject, multi-select and
-Ctrl+Return / Ctrl+Backspace. See §8 for the design and what remains (the cleanup).
+**Current state at a glance:** `cloak_core` **v0.7.1** · **252 tests pass** on system
+Python, **311** in `.venv-qt` (PyQt6 + hypothesis + markdown) · `ruff` clean.
+The **~222-suggestions problem is solved** and shipped in **v0.7.1**: one model run,
+then an interactive **triage** surface — GLiNER's confidence is kept per item; a **live
+control panel** (confidence slider + "N of M shown" count + person/org/place/project
+toggles + min-mentions + sort) filters the computed set **client-side with no re-run**;
+the SUGGESTIONS zone is **grouped by type** with per-type and shown-wide **bulk**
+approve/reject, multi-select and Ctrl+Return / Ctrl+Backspace. A pre-release **4-track
+audit** (security · packaging · correctness · docs) landed fixes: a mid-scan
+transcript-switch guard, approved-suggestions stay visible under a toggled-off type, an
+honest spine caution when a declared/PII item is kept in cleartext, and the vendored
+GLiNER **localhost HTTP server (`serve/`) pruned from the zip**. See §8 for what remains.
 **Phases 0–6 + the full v2 UX (A–D) are done** — every product guarantee (PG1–PG8) is
 now backed by a build-failing test (`cloak/cloak_core/tests/guarantees_test.py`,
 including the offline PG1), FR-14 extensibility is demonstrated, locale files are
@@ -233,8 +236,8 @@ menu persists as a single entry after restart.
   prominent **Copy scrubbed** (disabled when not clean — PG7 at the UI), the
   **decisions** table (placeholder/original/type/why/count/state, words not color —
   UX-5), the **key hidden** behind a Reveal toggle (the secret — UX-6/7), and a
-  paste-back **Restore** box. Menu gains **"Review & restore…"** (demo kept as
-  "Sanitizer (manual demo)…").
+  paste-back **Restore** box. Menu shows **"Review & restore…"** only; the manual demo
+  is dev-gated behind the `CLOAK_DEV` env var (Step A), and the "About" action was dropped.
 - **Tests (+38):** `transcript_test`, `persistence_test` (pure core); `pipeline_test`
   (detectors-from-config, **segments not mutated**, PII toggle, `on_complete` via
   Buzz's real loader → writes sidecar without touching segments, never raises);
@@ -287,7 +290,7 @@ buzz-plugin/
 │   │   └── tests/            # pure-core suite (no buzz/Qt; runs on system Python)
 │   ├── cloak_host/           # Buzz/Qt adapters (may import PyQt6 + buzz)
 │   │   ├── i18n.py           # shared translator -> plugin root's locale/
-│   │   ├── menu.py           # main-thread menu attach (Review + demo + about actions)
+│   │   ├── menu.py           # main-thread menu attach (Review; demo gated by CLOAK_DEV)
 │   │   ├── paths.py          # sidecar dir under Buzz's cache (platformdirs)
 │   │   ├── pipeline.py       # on_complete glue: config → detectors → sidecar
 │   │   ├── review_window.py  # interactive Review & restore window (Phase 5a+5b)
@@ -349,8 +352,8 @@ Two suites, two environments — together they cover everything. Run from the re
 
 | Environment | Command (from repo root) | Result | What skips |
 |---|---|---|---|
-| **System Python** (3.14 here) | `python -m pytest cloak` | ~140 pass | menu/demo (no PyQt6), property (no hypothesis), md-render (no markdown) |
-| **`.venv-qt`** (3.12 + PyQt6 + hypothesis + markdown) | `QT_QPA_PLATFORM=offscreen .venv-qt/Scripts/python.exe -m pytest cloak` | ~153 pass | plugin_load (no platformdirs/buzz) |
+| **System Python** (3.14 here) | `python -m pytest cloak` | ~252 pass | menu/demo (no PyQt6), property (no hypothesis), md-render (no markdown) |
+| **`.venv-qt`** (3.12 + PyQt6 + hypothesis + markdown) | `QT_QPA_PLATFORM=offscreen .venv-qt/Scripts/python.exe -m pytest cloak` | ~311 pass | plugin_load (no platformdirs/buzz) |
 
 **`.venv-qt` already exists** in the tree (throwaway — not committed, not zipped, lets us
 run the Qt/hypothesis/markdown tests without the heavy Buzz env). Recreate if needed:
@@ -653,6 +656,24 @@ supersede it. Retire: the frozen suggestion path in `pipeline.py`, the `enable_s
 config field, and `pipeline._auto_apply_suggestions` (FR-12 lives in `_on_suggestions_ready`
 + the bulk actions). Also: exercise real GLiNER via opt-in `CLOAK_RUN_MODEL_TEST=1`; and
 optionally **persist triage defaults** (confidence/types) in plugin settings.
+
+**Deferred by the v0.7.1 audit (tracked, not blockers):**
+- **Offline belt-and-suspenders (sec M2).** The suggestion loader relies on
+  `local_files_only=True`; the `except TypeError` fallback in
+  `model_provider_buzz._load_model` drops it. Dead for the pinned vendored GLiNER 0.2.27
+  (the primary load works), so left as-is to not destabilize the confirmed path — but if
+  the vendor is ever bumped, keep `local_files_only` in the fallback (or set
+  `HF_HUB_OFFLINE=1`/`TRANSFORMERS_OFFLINE=1` **only** around the load, never around the
+  first-run download, to avoid breaking Buzz's concurrent HF use).
+- **Key-file permissions (sec L2).** `key.json` (the secret, PG8) is written with the
+  default umask. On a shared POSIX box another local user could read it. Harden with
+  `chmod 0600` on the key + `0700` on the cloak data dir on POSIX (no-op/ACL on Windows).
+- **`SEC-H1` — verification is not re-run on the edit path.** `meta["clean"]` is computed
+  once at sanitize time; edits only re-derive. This is fail-*closed*-safe (an unsafe
+  transcript stays withheld) and the v0.7.1 **spine caution** now flags a declared/PII item
+  the user keeps in cleartext. A full gate re-run was deliberately **not** added — it would
+  wrongly withhold the *intentional* keep-in-cleartext choice. Revisit only if the model
+  changes what "clean" means on edits.
 
 **Smaller remaining items (optional / low priority):**
 - **Suspicion lens (FR-22, lowest priority):** an opt-in toggle that dims clearly-safe

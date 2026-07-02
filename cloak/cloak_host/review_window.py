@@ -114,6 +114,11 @@ _SAFE = "background:#e9f1ea; color:#2f6b3d; padding:8px; border-left:7px solid #
 _EMPTY = (
     "background:#eaf0f2; color:#4a6b7a; padding:8px; border-left:7px solid #4a6b7a;"
 )
+# Safe-but-note-this: the guaranteed path verified, yet the user has deliberately
+# kept a declared/PII item in cleartext, so a copy WILL include it. Amber, not red.
+_CAUTION = (
+    "background:#fbf3e2; color:#7a5b00; padding:8px; border-left:7px solid #b8860b;"
+)
 _UNSAFE = (
     "background:#2a1414; color:#ffe6e1; padding:10px; "
     "border:2px solid #b3261e; font-weight:bold;"
@@ -238,12 +243,14 @@ class ReviewWindow(QWidget):
         self._mode = "review"
         self._last_toast = ""
         self._toast_label: QLabel | None = None
+        self._toast_timer: QTimer | None = None
         self._suggestion_buttons: dict[str, tuple[QPushButton, QPushButton]] = {}
         self._reapprove_buttons: dict[str, QPushButton] = {}
         self._mono = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
         # On-demand suggestions run on a worker thread; tests inject a stub provider.
         self._provider_factory = _default_suggestion_provider
         self._suggest_worker: _SuggestionWorker | None = None
+        self._suggest_source_dir = ""  # which transcript the running scan belongs to
 
         # Live triage state (filters the computed suggestion set client-side; no
         # re-run). Defaults reproduce the pre-triage view (everything ≥ 0.5).
@@ -847,6 +854,14 @@ class ReviewWindow(QWidget):
     def _update_spine(self, sidecar, clean: bool) -> None:
         removed = sum(1 for i in sidecar.items if i.state == DecisionState.APPROVED)
         pending = sum(1 for i in sidecar.items if i.state == DecisionState.PENDING)
+        # A declared/PII item the user chose to KEEP in cleartext (an override): the
+        # verified path is still "clean" (no undetected leak), but a copy will carry
+        # that original, so the spine must say so instead of a bare "SAFE".
+        kept_guaranteed = sum(
+            1
+            for i in sidecar.items
+            if i.tier in _GUARANTEED and i.state == DecisionState.REJECTED
+        )
         if not clean:
             self._spine_label.setText(
                 _(
@@ -860,6 +875,14 @@ class ReviewWindow(QWidget):
                 _("✔  NOTHING SENSITIVE FOUND in this transcript")
             )
             self._spine_label.setStyleSheet(_EMPTY)
+        elif kept_guaranteed:
+            self._spine_label.setText(
+                _(
+                    "⚠  SAFE — but {kept} declared/PII item(s) kept in cleartext "
+                    "will be copied · {removed} removed · {pending} suggestions"
+                ).format(kept=kept_guaranteed, removed=removed, pending=pending)
+            )
+            self._spine_label.setStyleSheet(_CAUTION)
         else:
             self._spine_label.setText(
                 _(
@@ -942,13 +965,15 @@ class ReviewWindow(QWidget):
         ]
         pending = [i for i in suggestions if i.state == DecisionState.PENDING]
         approved = [i for i in suggestions if i.state == DecisionState.APPROVED]
+        # The triage filters (score / type / min-mentions) narrow the PENDING pile.
+        # APPROVED suggestions are already-made decisions — they stay visible as the
+        # record of what was removed, even for a toggled-off type (an audit trail you
+        # must never lose by fiddling a view control).
         shown_pending = [i for i in pending if self._passes_suggestion(i)]
         self._shown_pending = shown_pending
         keyer = self._suggestion_sort_key()
 
         for type_, label in _SUGGESTION_TYPES:
-            if type_ not in self._sugg_types:
-                continue  # a toggled-off type collapses (pending and approved)
             type_pending = sorted(
                 (i for i in shown_pending if i.type == type_), key=keyer
             )
@@ -1007,7 +1032,15 @@ class ReviewWindow(QWidget):
         return lambda i: (-i.score, i.original.casefold())  # confidence (default)
 
     def _add_suggestion_subgroup(self, label, pending_items, approved_items) -> None:
-        header = QTreeWidgetItem([f"  {label} ({len(pending_items)})", "", "", ""])
+        if approved_items:
+            heading = _("  {label} ({n} pending · {a} approved)").format(
+                label=label, n=len(pending_items), a=len(approved_items)
+            )
+        else:
+            heading = _("  {label} ({n} pending)").format(
+                label=label, n=len(pending_items)
+            )
+        header = QTreeWidgetItem([heading, "", "", ""])
         font = header.font(0)
         font.setBold(True)
         header.setFont(0, font)
@@ -1375,6 +1408,10 @@ class ReviewWindow(QWidget):
             return
         self._suggest_button.setEnabled(False)
         self._suggest_status.setText(_("Starting…"))
+        # Remember which transcript we're scanning: the model run can be slow (first-run
+        # download), and the user may switch transcripts before it returns. The result
+        # is located against THESE segments, so it must only ever land on this sidecar.
+        self._suggest_source_dir = self._current_dir
         known = {i.canonical for i in self._sidecar.items}
         worker = _SuggestionWorker(
             list(self._sidecar.segments), known, self._provider_factory
@@ -1386,8 +1423,13 @@ class ReviewWindow(QWidget):
         self._suggest_worker = worker
         worker.start()
 
+    def _suggest_result_is_stale(self) -> bool:
+        """True if the loaded transcript changed since the scan started — the result
+        was located against the old segments, so applying it would corrupt this one."""
+        return self._sidecar is None or self._current_dir != self._suggest_source_dir
+
     def _on_suggestions_ready(self, items) -> None:
-        if self._sidecar is None:
+        if self._suggest_result_is_stale():
             self._suggest_status.setText("")
             return
         known = {i.canonical for i in self._sidecar.items}
@@ -1410,6 +1452,9 @@ class ReviewWindow(QWidget):
             self._suggest_status.setText(_("No new suggestions found."))
 
     def _on_suggestions_failed(self, reason: str) -> None:
+        if self._suggest_result_is_stale():
+            self._suggest_status.setText("")
+            return
         # Never silent — surface *why* on screen, not only in the log.
         self._suggest_status.setText(_("Unavailable — {reason}").format(reason=reason))
         self._toast(_("Couldn't run suggestions: {reason}").format(reason=reason))
@@ -1520,6 +1565,15 @@ class ReviewWindow(QWidget):
         ):
             walk(group)
 
+        # A type subgroup whose every row was filtered out would otherwise leave a
+        # dangling "People (…)" header (with its bulk buttons) over nothing — hide it.
+        for index in range(self._group_suggestions.childCount()):
+            subgroup = self._group_suggestions.child(index)
+            visible = any(
+                not subgroup.child(j).isHidden() for j in range(subgroup.childCount())
+            )
+            subgroup.setHidden(not visible)
+
     @staticmethod
     def _row_haystack(row) -> str:
         parts = [row.text(0), row.text(1), row.text(3)]
@@ -1597,7 +1651,18 @@ class ReviewWindow(QWidget):
         )
         label.show()
         label.raise_()
-        QTimer.singleShot(2400, label.hide)
+        # A window-owned single-shot timer (not a bare QTimer.singleShot) so that if the
+        # window is closed within the 2.4 s, the timer is torn down with it and never
+        # fires into a deleted label.
+        if self._toast_timer is None:
+            self._toast_timer = QTimer(self)
+            self._toast_timer.setSingleShot(True)
+            self._toast_timer.timeout.connect(self._hide_toast)
+        self._toast_timer.start(2400)
+
+    def _hide_toast(self) -> None:
+        if self._toast_label is not None:
+            self._toast_label.hide()
 
 
 class _DeclaredListEditor(QDialog):
