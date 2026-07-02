@@ -1,10 +1,9 @@
 """The product guarantees PG1–PG8, stated once, in one build-failing suite.
 
-Each guarantee from the spec (``buzz-sanitizer-spec.md`` §Product guarantees) is
-asserted here explicitly, so the whole contract is auditable in a single file and any
-regression **fails the build** (the DoD requirement). The individual phases also
-exercise these behaviours in context; this module is the consolidated, labelled
-statement of record.
+Each product guarantee (PG1–PG8) is asserted here explicitly, so the whole contract
+is auditable in a single file and any regression **fails the build** (the DoD
+requirement). The individual phases also exercise these behaviours in context; this
+module is the consolidated, labelled statement of record.
 
 Pure core: runs on system Python, no Qt. **No network** — and PG1 proves it by rigging
 every network primitive to explode while the guaranteed path runs.

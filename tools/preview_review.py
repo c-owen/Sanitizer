@@ -13,8 +13,8 @@ Run in the PyQt6 venv, with a real display (NOT offscreen):
 
 Each run starts from fresh preferences (temp dir), so the first-use teaching shows
 and auto-apply is hidden until you approve/reject something. This is a preview of the
-UI only — for the end-to-end pipeline (transcribe → sidecar → menu) use the real-Buzz
-build→serve→ingest loop in DEV_NOTES.md §3.
+UI only — for the end-to-end pipeline (transcribe → sidecar → menu), build the zip
+with ``tools/package.py`` and load it into a real Buzz install via Add by URL.
 """
 
 from __future__ import annotations
