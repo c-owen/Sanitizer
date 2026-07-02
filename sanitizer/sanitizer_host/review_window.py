@@ -134,9 +134,8 @@ _HL_SUB = "QPlainTextEdit { background:#dfe9df; }"
 _EVIDENCE = "background:#fbfbfa; border:1px solid #b9b6b1; padding:8px;"
 _NOTE = "background:#eaf0f2; color:#28414c; padding:6px;"
 
-# Grayscale-first window styling (design tokens from
-# design/sanitizer_layout_skeleton.py). Only the base chrome — semantic states
-# (spine, walls, key header, highlights) keep their own inline styles, which win.
+# Grayscale-first window styling. Only the base chrome — semantic states (spine,
+# walls, key header, highlights) keep their own inline styles, which win over this.
 _WINDOW_QSS = """
 QWidget#sanitizer_review_window { background:#f2f1ef; color:#1d1c1a; }
 QTreeWidget { background:#ffffff; border:1px solid #b9b6b1; }

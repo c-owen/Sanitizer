@@ -5,7 +5,9 @@ identity + config, attaches Sanitizer's UI (a "Sanitizer" menu → review/restor
 main window using only public Qt APIs **without modifying Buzz**, and on
 ``on_complete`` runs the host-independent sanitizer over the finished transcript,
 writing a sidecar keyed by ``transcription_id`` (the stored transcript is never
-touched). All the safety-critical logic lives in ``sanitizer_core``; see ``DEV_NOTES``.
+touched). All the safety-critical logic lives in ``sanitizer_core``, which is
+kept host-independent by design (no ``buzz``/``PyQt6`` imports — see
+``boundary_test.py``).
 
 Buzz loads this file as a standalone module (``buzz_plugin_sanitizer``) by file
 path, so the plugin's own packages (``sanitizer_core``, ``sanitizer_host``) are not
@@ -22,8 +24,7 @@ import sys
 # Buzz execs this file via ``importlib.spec_from_file_location`` — i.e. as a
 # top-level module, not part of a package — so relative imports do not resolve.
 # Putting the plugin root on ``sys.path`` lets ``import sanitizer_core`` /
-# ``sanitizer_host`` work both inside Buzz and under pytest. See DEV_NOTES.md
-# ("Import bootstrap & update caveat").
+# ``sanitizer_host`` work both inside Buzz and under pytest.
 _PLUGIN_ROOT = os.path.dirname(os.path.abspath(__file__))
 if _PLUGIN_ROOT not in sys.path:
     sys.path.insert(0, _PLUGIN_ROOT)

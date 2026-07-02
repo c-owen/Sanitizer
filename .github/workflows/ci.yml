@@ -1,7 +1,6 @@
 name: CI
 
-# Runs on every push to main and every PR targeting it. Validates the plugin the
-# same way local dev does (see sanitizer/DEV_NOTES.md sec 4), but in one unified
+# Runs on every push to main and every PR targeting it, in one unified
 # environment: PyQt6 + buzz cloned alongside, so both the pure-core suite and the
 # host-integration suite (menu/pipeline/review-window) run in a single pass. No
 # ML deps (torch/transformers/etc.) are installed -- the real-model test stays

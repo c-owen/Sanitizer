@@ -8,8 +8,8 @@ restore stays reliable across the markdown round trip. Two properties matter:
   swallow the token (``[[x]]`` becomes a wiki-link in some flavors; ``<x>`` an HTML
   tag; ``_x_`` italics — all unsafe);
 * **ASCII-safe** — encodes cleanly to ASCII, so copy/paste through a legacy or
-  ASCII-only app can't drop it (the Unicode ``⟦ ⟧`` brackets fail this — see the
-  cp1252 console failure in DEV_NOTES).
+  ASCII-only app can't drop it (the Unicode ``⟦ ⟧`` brackets fail this — they once
+  caused a cp1252 console crash).
 
 The default :class:`BraceScheme` (``{{LABEL-N}}``) satisfies both. The interface
 is swappable so the style can change without touching detection or substitution
