@@ -72,6 +72,7 @@ from sanitizer_core.transcript import (
     find_miss_candidates,
     next_free_placeholder,
     sanitize_transcript,
+    scan_safe_text,
     suggest_items,
 )
 from sanitizer_core.vault import Vault
@@ -133,6 +134,7 @@ __all__ = [
     "restore",
     "sanitize",
     "sanitize_transcript",
+    "scan_safe_text",
     "suggest_items",
     "write_declared_terms",
     "write_preferences",

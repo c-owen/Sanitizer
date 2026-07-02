@@ -78,6 +78,21 @@ def _write_sidecar(directory):
     return sanitization
 
 
+def _write_multi_paragraph(directory):
+    # Three segments: the first two are back-to-back (one paragraph), the third
+    # follows a 5s pause (a new paragraph) -- like a real multi-sentence transcript.
+    sanitization = sanitize_transcript(
+        [
+            Seg(0, 1000, "Call Jane"),
+            Seg(1000, 2000, "about the project"),
+            Seg(7000, 8000, "Bob is on it too"),
+        ],
+        [DeclaredListDetector({"person": ["Jane", "Bob"]})],
+    )
+    persistence.write_sidecar(directory / "mp", sanitization, _meta(sanitization))
+    return sanitization
+
+
 def _write_with_suggestion(directory):
     detectors = [
         DeclaredListDetector(["Jane"]),
@@ -258,7 +273,9 @@ def test_restore_round_trips(tmp_path, qtbot):
     window._returned_edit.setPlainText(window._scrubbed_text)
     window._restore_button.click()
 
-    assert window._restored_edit.toPlainText() == "Call Jane\nbye Jane"
+    # _write_sidecar's two segments are back-to-back (0ms gap) -> one paragraph,
+    # space-joined, matching Buzz's own plain-text export convention.
+    assert window._restored_edit.toPlainText() == "Call Jane bye Jane"
 
 
 def test_restore_reports_unresolved_tags(tmp_path, qtbot):
@@ -298,6 +315,20 @@ def test_send_out_copy_and_preview(tmp_path, qtbot):
     window._preview_toggle.setChecked(True)
     assert window._preview_edit.isVisibleTo(window)
     assert "{{TERM-1}}" in window._preview_edit.toPlainText()
+
+
+def test_send_out_text_reads_as_paragraphs_not_one_line_per_segment(tmp_path, qtbot):
+    # The actual bug this guards: a flat one-segment-per-line join reads as a
+    # disjointed wall of text when copied out. Back-to-back segments should read
+    # as continuous prose; only a real pause (>=2s) should start a new paragraph.
+    _write_multi_paragraph(tmp_path)
+    window = _new_window(tmp_path, qtbot)
+    window.set_mode("sendout")
+    window._preview_toggle.setChecked(True)
+
+    text = window._preview_edit.toPlainText()
+    assert text == "Call {{PERSON-A}} about the project\n\n{{PERSON-B}} is on it too"
+    assert "\n" not in text.split("\n\n")[0]  # first paragraph has no hard breaks
 
 
 # --- suggestions (Approve/Reject; held by default) --------------------------

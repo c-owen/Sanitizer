@@ -25,6 +25,7 @@ from sanitizer_core.transcript import (
     ReviewItem,
     SanitizedSegment,
     TranscriptSanitization,
+    _join_as_paragraphs,
     item_from_dict,
     item_to_dict,
     segment_from_dict,
@@ -48,11 +49,11 @@ class Sidecar:
 
     @property
     def scrubbed_text(self) -> str:
-        return "\n".join(segment.scrubbed for segment in self.segments)
+        return _join_as_paragraphs(self.segments, lambda s: s.scrubbed)
 
     @property
     def original_text(self) -> str:
-        return "\n".join(segment.original for segment in self.segments)
+        return _join_as_paragraphs(self.segments, lambda s: s.original)
 
 
 def has_sidecar(directory: str | Path) -> bool:

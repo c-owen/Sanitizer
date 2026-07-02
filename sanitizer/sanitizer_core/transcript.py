@@ -92,6 +92,39 @@ class SanitizedSegment:
     scrubbed: str
 
 
+# Matches Buzz's own plain-text export default (``BUZZ_PARAGRAPH_SPLIT_TIME`` in
+# ``file_transcriber.py``) — a pause of this length or more starts a new paragraph.
+# ``start``/``end`` are in milliseconds, Buzz's own unit (the only host today).
+_PARAGRAPH_GAP_MS = 2000
+
+
+def _join_as_paragraphs(segments: Sequence[SanitizedSegment], text_of) -> str:
+    """Join per-segment text into flowing prose, the way Buzz's own plain-text
+    export does it: consecutive segments are space-joined into continuous prose,
+    with a paragraph break only where there's a real pause (a gap of
+    ``_PARAGRAPH_GAP_MS`` or more between one segment's end and the next one's
+    start). A naive one-line-per-segment join reads as disjointed noise, since a
+    transcription segment is often just a handful of words.
+
+    Builds explicit separators between non-empty pieces (rather than appending a
+    trailing space to each and stripping the ends) so a paragraph break can never
+    inherit a stray leading space from the text before it.
+    """
+    pieces: list[str] = []
+    previous_end: int | None = None
+    for segment in segments:
+        text = text_of(segment).strip()
+        if not text:
+            previous_end = segment.end  # still counts for the next gap check
+            continue
+        if previous_end is not None:
+            gap = segment.start - previous_end
+            pieces.append("\n\n" if gap >= _PARAGRAPH_GAP_MS else " ")
+        pieces.append(text)
+        previous_end = segment.end
+    return "".join(pieces)
+
+
 @dataclass
 class TranscriptSanitization:
     """The outcome of sanitizing a whole transcript: scrubbed segments, the merged
@@ -105,11 +138,11 @@ class TranscriptSanitization:
 
     @property
     def scrubbed_text(self) -> str:
-        return "\n".join(segment.scrubbed for segment in self.segments)
+        return _join_as_paragraphs(self.segments, lambda s: s.scrubbed)
 
     @property
     def original_text(self) -> str:
-        return "\n".join(segment.original for segment in self.segments)
+        return _join_as_paragraphs(self.segments, lambda s: s.original)
 
     @property
     def removed_items(self) -> int:
@@ -256,6 +289,23 @@ class MissCandidate:
 
 def _canonical(surface: str) -> str:
     return re.sub(r"\s+", " ", surface).strip().casefold()
+
+
+def scan_safe_text(
+    segments: Sequence[SanitizedSegment], text_of=lambda s: s.scrubbed
+) -> str:
+    """Join segment text with a hard newline between every segment, for feeding
+    into :func:`find_miss_candidates` (or any other regex/heuristic scan) — never
+    for display or copy.
+
+    ``_CAP_RUN_RE``'s inter-word gap is deliberately horizontal-only ([ \\t]) so a
+    capitalized run can never span a segment boundary and invent a phrase that
+    exists in no single segment (e.g. one segment ending "...about Karen" and the
+    next starting "Karen again" must never read as the single run "Karen Karen
+    again"). ``_join_as_paragraphs`` (used for ``scrubbed_text``/display) breaks
+    that invariant on purpose, for readability — so scanning needs its own join.
+    """
+    return "\n".join(text_of(segment) for segment in segments)
 
 
 def find_miss_candidates(

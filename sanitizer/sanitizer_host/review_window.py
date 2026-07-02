@@ -73,6 +73,7 @@ from sanitizer_core import (
     read_preferences,
     remove_declared_term,
     restore,
+    scan_safe_text,
     suggest_items,
     write_preferences,
 )
@@ -1229,7 +1230,11 @@ class ReviewWindow(QWidget):
             self._miss_strip.setVisible(False)
             return
         known = {i.canonical for i in self._sidecar.items}
-        candidates = find_miss_candidates(self._scrubbed_text, known=known, limit=4)
+        # scan_safe_text, NOT self._scrubbed_text: the display join can merge
+        # close segments with a plain space, but the miss-scan regex must never
+        # let a capitalized run cross a segment boundary (see its docstring).
+        scan_text = scan_safe_text(self._sidecar.segments)
+        candidates = find_miss_candidates(scan_text, known=known, limit=4)
         for candidate in candidates:
             button = QPushButton(f"{candidate.surface} ({candidate.count})")
             button.setToolTip(_("Redact this everywhere and add it to your list"))

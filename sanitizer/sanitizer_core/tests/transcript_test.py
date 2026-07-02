@@ -103,11 +103,29 @@ def test_same_value_shares_placeholder_across_segments():
     assert result.segments[1].scrubbed == "and {{TERM-1}} there"
 
 
-def test_scrubbed_text_joins_segments():
+def test_scrubbed_text_joins_close_segments_as_one_paragraph():
+    # A tiny (< 2s) gap between segments reads as continuous speech — space-joined
+    # prose, matching Buzz's own plain-text export, not one line per segment.
     segments = [Seg(0, 1, "Call Jane"), Seg(1, 2, "or Bob")]
     result = sanitize_transcript(segments, _declared("Jane", "Bob"))
-    assert result.scrubbed_text == "Call {{TERM-1}}\nor {{TERM-2}}"
-    assert result.original_text == "Call Jane\nor Bob"
+    assert result.scrubbed_text == "Call {{TERM-1}} or {{TERM-2}}"
+    assert result.original_text == "Call Jane or Bob"
+
+
+def test_scrubbed_text_breaks_paragraph_on_a_real_pause():
+    # A >= 2s gap between segments is a real pause — starts a new paragraph
+    # (matches Buzz's BUZZ_PARAGRAPH_SPLIT_TIME default of 2000ms).
+    segments = [Seg(0, 1000, "Call Jane"), Seg(3000, 4000, "or Bob")]
+    result = sanitize_transcript(segments, _declared("Jane", "Bob"))
+    assert result.scrubbed_text == "Call {{TERM-1}}\n\nor {{TERM-2}}"
+    assert result.original_text == "Call Jane\n\nor Bob"
+
+
+def test_scrubbed_text_gap_just_under_threshold_stays_one_paragraph():
+    segments = [Seg(0, 1000, "Call Jane"), Seg(2999, 4000, "or Bob")]  # 1999ms gap
+    result = sanitize_transcript(segments, _declared("Jane", "Bob"))
+    assert "\n\n" not in result.scrubbed_text
+    assert result.scrubbed_text == "Call {{TERM-1}} or {{TERM-2}}"
 
 
 def test_distinct_segments_distinct_placeholders_and_counts():
@@ -204,6 +222,26 @@ def test_find_miss_candidates_excludes_known_and_placeholders():
 
     candidates = find_miss_candidates("{{PERSON-A}} met Karen and Bob", known={"bob"})
     assert {c.surface for c in candidates} == {"Karen"}  # placeholder + Bob excluded
+
+
+def test_scan_safe_text_never_merges_a_run_across_a_segment_boundary():
+    # Regression: _join_as_paragraphs (display) can space-join two close segments,
+    # which would let the miss-scan regex invent "Karen Karen again" -- a phrase
+    # present in no single segment -- if it were fed that text. scan_safe_text
+    # must always hard-break with \n regardless of how close the segments are.
+    from sanitizer_core.transcript import find_miss_candidates, scan_safe_text
+
+    segments = sanitize_transcript(
+        [Seg(0, 1, "Call Jane about Karen"), Seg(1, 2, "Karen again")],
+        _declared("Jane"),
+    ).segments
+    text = scan_safe_text(segments)
+    assert "\n" in text  # never space-joined, no matter the segment gap
+
+    candidates = find_miss_candidates(text)
+    surfaces = {c.surface for c in candidates}
+    assert "Karen Karen again" not in surfaces  # the phantom must not appear
+    assert "Karen" in surfaces or "Karen again" in surfaces  # real candidates intact
 
 
 def test_build_manual_item_redacts_all_occurrences():
