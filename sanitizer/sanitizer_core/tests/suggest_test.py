@@ -1,4 +1,4 @@
-"""Model-suggestion tier — SUGGESTED, PENDING, review-gated, never auto-applied.
+"""Model-suggestion tier: SUGGESTED, PENDING, review-gated, never auto-applied.
 
 Covers FR-9/FR-15 and the guarantee that suggestions stay out of the guaranteed
 set (PG6): they are held for review, excluded from the fail-closed gate, and the

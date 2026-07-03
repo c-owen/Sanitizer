@@ -3,10 +3,10 @@
 Buzz has no UI-extension hook, and a plugin may be constructed on *either*
 thread depending on how Buzz loads it:
 
-* **Startup** — ``PluginManager.initialize`` runs on the **main thread**, but
+* **Startup**: ``PluginManager.initialize`` runs on the **main thread**, but
   *before* Buzz installs its real menu bar: ``MainWindow.__init__`` calls
   ``initialize`` (~line 80) well ahead of ``setMenuBar`` (~line 128).
-* **Add from URL** — ``PluginManager.add_from_url`` runs on a **background**
+* **Add from URL**: ``PluginManager.add_from_url`` runs on a **background**
   ``QThreadPool`` thread and instantiates the plugin *twice*.
 
 Attaching the menu directly from ``__init__`` is therefore wrong in both cases:
@@ -15,7 +15,7 @@ add it runs off the GUI thread (cross-thread ``QMenu`` parenting breaks dedupe �
 two menus). To be correct in both, this module **posts the attach onto the main
 thread's event loop**, where it runs once the window is fully built;
 ``build_sanitizer_menu`` is idempotent so repeated instantiations collapse to a
-single menu. Only public Qt APIs are used — Buzz is never modified.
+single menu. Only public Qt APIs are used; Buzz is never modified.
 """
 
 from __future__ import annotations
@@ -57,8 +57,8 @@ class _MainThreadInvoker(QObject):
     Created lazily and parked on the main (GUI) thread, so emitting ``_run``
     from any thread posts the callable to the main event loop. The explicit
     ``QueuedConnection`` makes the call deferred even when emitted *from* the
-    main thread — so attach work never runs synchronously inside ``__init__``
-    (which, at startup, is too early — the real menu bar is not set yet).
+    main thread, so attach work never runs synchronously inside ``__init__``
+    (which, at startup, is too early: the real menu bar is not set yet).
     """
 
     _run = pyqtSignal(object)
@@ -114,7 +114,7 @@ def find_main_window() -> QMainWindow | None:
 def build_sanitizer_menu(main_window: QMainWindow) -> QMenu | None:
     """Add the Sanitizer menu to ``main_window``'s menu bar (idempotent).
 
-    Returns the menu — existing or newly created — or ``None`` if the window has
+    Returns the menu (existing or newly created), or ``None`` if the window has
     no menu bar. Uses only the public ``QMainWindow.menuBar()`` API. Must run on
     the main thread (callers route through ``_post_to_main_thread``).
     """
@@ -135,7 +135,7 @@ def build_sanitizer_menu(main_window: QMainWindow) -> QMenu | None:
     menu.addAction(review_action)
 
     # Developer-only: the manual sanitizer playground, hidden unless SANITIZER_DEV is
-    # set. It is not part of the shipped surface — the review window is the product.
+    # set. It is not part of the shipped surface: the review window is the product.
     if os.environ.get("SANITIZER_DEV"):
         menu.addSeparator()
         demo_action = QAction(_("Sanitizer (manual demo)…"), main_window)
@@ -165,7 +165,7 @@ def _safe_open(opener, parent: QWidget | None) -> None:
     """Run a window-opener, containing any error so it can't crash the host.
 
     PyQt6 aborts the process on an unhandled exception raised inside a slot, so
-    every menu action routes through here — a plugin must never take down Buzz.
+    every menu action routes through here: a plugin must never take down Buzz.
     """
     try:
         opener(parent)

@@ -1,9 +1,9 @@
-"""FR-14 — extensible without touching existing code.
+"""FR-14: extensible without touching existing code.
 
 Living proof that a third party can add a **new detector** *and* a **new format
 handler** using only the public seams (the ``Detector`` and ``FormatHandler``
 protocols) and have them work through the unmodified sanitizer, fail-closed gate and
-restore. Nothing in ``sanitizer_core`` is edited to make this pass — both classes live
+restore. Nothing in ``sanitizer_core`` is edited to make this pass: both classes live
 entirely in this test module, yet they compose with the shipped machinery.
 """
 
@@ -19,7 +19,7 @@ from sanitizer_core.sanitizer import sanitize
 
 class MacAddressDetector:
     """A new guaranteed detector (MAC addresses) added purely by implementing the
-    ``Detector`` protocol — never registered in ``detectors/pii.py``."""
+    ``Detector`` protocol: never registered in ``detectors/pii.py``."""
 
     _RE = re.compile(r"\b(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}\b")
 
@@ -41,7 +41,7 @@ class MacAddressDetector:
 
 class HtmlPreHandler:
     """A new ``FormatHandler`` (HTML ``<pre>`` block) added without touching
-    ``formats/`` — serialize wraps, parse unwraps, placeholders survive intact."""
+    ``formats/``: serialize wraps, parse unwraps, placeholders survive intact."""
 
     name = "html"
 

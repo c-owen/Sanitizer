@@ -1,4 +1,4 @@
-"""Restore — substitute originals back from the key (FR-7, PG4).
+"""Restore: substitute originals back from the key (FR-7, PG4).
 
 Host-independent. Placeholders absent from the returned text are simply skipped,
 with no error. Phase 1 does exact placeholder matching; markdown-robust matching

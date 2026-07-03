@@ -1,4 +1,4 @@
-"""SanitizerDemoWindow — the in-Buzz Phase 1 sanitizer playground.
+"""SanitizerDemoWindow: the in-Buzz Phase 1 sanitizer playground.
 
 Requires PyQt6 + pytest-qt (skips elsewhere). Confirms sanitizer_core runs inside a
 real Qt window and the sanitize → key → restore round trip works end to end.

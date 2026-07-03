@@ -1,11 +1,11 @@
-"""Open the real Sanitizer ReviewWindow with sample data — a dev preview (no Buzz).
+"""Open the real Sanitizer ReviewWindow with sample data: a dev preview (no Buzz).
 
 The review UI is a normal top-level Qt window backed by a sidecar directory, so it
 runs standalone. This harness writes a few sample sidecars into a throwaway temp dir
-and opens the live window against them, so you can click through every state —
-Review / Send out / Restore, safe / unsafe / empty, the suggestions Approve/Reject,
-the miss-catching strip, the first-use key note, the auto-apply offer (appears after
-you make one decision), and the declared-list editor — with real fonts.
+and opens the live window against them, so you can click through every state, with
+real fonts: Review / Send out / Restore, safe / unsafe / empty, the suggestions
+Approve/Reject, the miss-catching strip, the first-use key note, the auto-apply offer
+(appears after you make one decision), and the declared-list editor.
 
 Run in the PyQt6 venv, with a real display (NOT offscreen):
 
@@ -13,7 +13,7 @@ Run in the PyQt6 venv, with a real display (NOT offscreen):
 
 Each run starts from fresh preferences (temp dir), so the first-use teaching shows
 and auto-apply is hidden until you approve/reject something. This is a preview of the
-UI only — for the end-to-end pipeline (transcribe → sidecar → menu), build the zip
+UI only. For the end-to-end pipeline (transcribe → sidecar → menu), build the zip
 with ``tools/package.py`` and load it into a real Buzz install via Add by URL.
 """
 
@@ -49,7 +49,7 @@ class _Seg:
 
 
 class _StubModel:
-    """A tiny stand-in for the suggestion model — flags one fixed name, no ML."""
+    """A tiny stand-in for the suggestion model: flags one fixed name, no ML."""
 
     def __init__(self, surface: str, label: str) -> None:
         self._surface, self._label = surface, label
@@ -102,7 +102,7 @@ def _seed(base: Path) -> None:
         [declared, *pii, suggest],
     )
 
-    # An UNSAFE transcript — the blocking/withheld state (PG7).
+    # An UNSAFE transcript: the blocking/withheld state (PG7).
     _write(
         base,
         "call-unsafe",
@@ -111,7 +111,7 @@ def _seed(base: Path) -> None:
         clean=False,
     )
 
-    # A transcript where nothing matched — the "nothing found, with receipts" state.
+    # A transcript where nothing matched: the "nothing found, with receipts" state.
     _write(
         base,
         "standup-clean",
@@ -131,7 +131,7 @@ def main() -> None:
     window.show()
     window.raise_()
     window.activateWindow()
-    # ASCII-only console output — a Windows cp1252 console throws on fancy glyphs,
+    # ASCII-only console output: a Windows cp1252 console throws on fancy glyphs,
     # and that would kill the process before app.exec() ever runs.
     print(f"Sanitizer review preview - sample sidecars in:\n  {base}")
     print("Close the window to exit. (Temp dir is left behind for inspection.)")

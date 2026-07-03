@@ -1,4 +1,4 @@
-"""The sanitizer — orchestrates detect → decide → substitute → verify.
+"""The sanitizer: orchestrates detect → decide → substitute → verify.
 
 Host-independent. Covers the guaranteed tiers (declared + PII, auto-approved)
 and runs the fail-closed verification gate. Model suggestions (review-gated,
@@ -26,7 +26,7 @@ def _resolve_overlaps(detections: list[Detection]) -> list[Detection]:
     """Keep a non-overlapping set, preferring the **longest** span, then higher
     trust, then position.
 
-    Longest-wins matters when one detection contains another — e.g. a declared
+    Longest-wins matters when one detection contains another, e.g. a declared
     name inside an email (``jane@acme.com``). Letting the email win removes the
     whole address (no ``@domain`` fragment leaks) while still removing the name
     (it's inside the larger placeholder), so the declared guarantee holds. With a
@@ -83,7 +83,7 @@ def sanitize(
         occurrences = by_canonical[canonical]
         # The most-trusted occurrence represents the group: if the same value is
         # both guaranteed (declared/PII) and model-suggested, the guaranteed tier
-        # wins — auto-approved and removed everywhere, never held for review. With
+        # wins: auto-approved and removed everywhere, never held for review. With
         # a single tier this is just the first occurrence (overlap resolution has
         # already dropped lower-tier hits that share a span).
         representative = min(occurrences, key=lambda d: (d.tier.value, d.span.start))

@@ -1,15 +1,15 @@
-"""Sidecar persistence — Sanitizer's private store, kept separate from the transcript.
+"""Sidecar persistence: Sanitizer's private store, kept separate from the transcript.
 
 Pure filesystem + JSON; the directory is **injected by the host** (the core never
 decides where Buzz's cache lives). Each sanitized transcript becomes a folder with
 four files:
 
     meta.json       version, clean flag, counts, settings snapshot, source hash
-    key.json        placeholder -> original  (THE SECRET — separate file, PG8)
+    key.json        placeholder -> original  (THE SECRET: separate file, PG8)
     decisions.json  one entry per review item (placeholder, original, why, state…)
     segments.json   per-segment original + scrubbed text, timing preserved (PG5)
 
-The user's stored Buzz transcript is never touched — this is Sanitizer's own working
+The user's stored Buzz transcript is never touched: this is Sanitizer's own working
 copy (the scrubbed text is the thing the user copies out). ``meta.json`` is written
 **last**, so its presence marks a complete, readable sidecar.
 """
@@ -59,6 +59,16 @@ class Sidecar:
 def has_sidecar(directory: str | Path) -> bool:
     """True if ``directory`` holds a complete sidecar (its ``meta.json`` exists)."""
     return (Path(directory) / META_FILE).is_file()
+
+
+def read_meta(directory: str | Path) -> dict:
+    """Read just ``meta.json`` from a sidecar directory.
+
+    Cheaper than :func:`read_sidecar` for callers that only need meta (e.g. a
+    transcription picker rendering a label) and would otherwise pay for loading
+    the segments, decisions and key too.
+    """
+    return _read_json(Path(directory) / META_FILE, {})
 
 
 def write_sidecar(

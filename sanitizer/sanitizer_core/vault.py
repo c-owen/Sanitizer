@@ -1,4 +1,4 @@
-"""The Vault — allocates consistent placeholders and records the reversible key."""
+"""The Vault: allocates consistent placeholders and records the reversible key."""
 
 from __future__ import annotations
 
@@ -10,9 +10,9 @@ class Vault:
     """Allocates one placeholder per distinct canonical value and records the key.
 
     Guarantees:
-      * idempotent — the same ``canonical`` always returns the same placeholder;
-      * injective — distinct canonical values get distinct placeholders;
-      * reversible — :meth:`key` maps every allocated placeholder to its original.
+      * idempotent: the same ``canonical`` always returns the same placeholder;
+      * injective: distinct canonical values get distinct placeholders;
+      * reversible: :meth:`key` maps every allocated placeholder to its original.
 
     A single Vault can be shared across many texts/segments so placeholders stay
     consistent across a whole transcript.

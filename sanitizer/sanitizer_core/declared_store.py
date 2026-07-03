@@ -1,9 +1,9 @@
-"""Sanitizer's own declared-terms store — the growable, in-window declared list (US2).
+"""Sanitizer's own declared-terms store: the growable, in-window declared list (US2).
 
 Declared terms have two homes. Buzz's plugin config holds the terms the user typed
 in settings; Sanitizer **cannot write** that (there is no host API for it, and Sanitizer
-never modifies Buzz). So terms the user adds *from the review window* — "add to my
-list" when catching a miss (FR-16) or via the in-window list editor — live here
+never modifies Buzz). So terms the user adds *from the review window*, either "add to
+my list" when catching a miss (FR-16) or via the in-window list editor, live here
 instead, in Sanitizer's own data directory next to the sidecars.
 
 The pipeline **unions** this store with the config terms when it builds detectors,
@@ -11,7 +11,7 @@ so an added term takes effect on the **next** transcript, not just the current o
 (that is what makes "add to my list" a real cross-transcript declared term rather
 than a one-off redaction).
 
-Entries are raw lines in the same tiny language the config textarea uses — a bare
+Entries are raw lines in the same tiny language the config textarea uses: a bare
 ``Karen`` or a categorized ``person: Jane`` (see
 :func:`sanitizer_core.detectors.declared.parse_declared_terms`). Storage is a JSON list
 of those lines; dedupe is by the term portion, case- and whitespace-insensitive, so

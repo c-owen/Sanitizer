@@ -49,6 +49,7 @@ from sanitizer_core.persistence import (
     Sidecar,
     has_sidecar,
     list_sidecars,
+    read_meta,
     read_sidecar,
     write_sidecar,
 )
@@ -78,7 +79,7 @@ from sanitizer_core.transcript import (
 from sanitizer_core.vault import Vault
 from sanitizer_core.verify import Verification, VerificationGate
 
-__version__ = "0.7.1"
+__version__ = "0.7.2"
 
 __all__ = [
     "CATEGORIES",
@@ -128,6 +129,7 @@ __all__ = [
     "persistence",
     "pii_detectors",
     "read_declared_terms",
+    "read_meta",
     "read_preferences",
     "read_sidecar",
     "remove_declared_term",

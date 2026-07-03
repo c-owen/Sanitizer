@@ -1,4 +1,4 @@
-"""Tiny demo of Sanitizer's host-independent core — sanitize, show the key, restore.
+"""Tiny demo of Sanitizer's host-independent core: sanitize, show the key, restore.
 
 No Buzz, no Qt, no ML deps. Run with plain system Python::
 
@@ -33,7 +33,7 @@ from sanitizer_core import (  # noqa: E402
 
 
 class _HeuristicProvider:
-    """A crude, offline stand-in for the real zero-shot model — for demoing the
+    """A crude, offline stand-in for the real zero-shot model, for demoing the
     suggestion tier only. Flags capitalized words as possible names so you can see
     suggestions surface as PENDING (held for review, never auto-applied). The real
     plugin uses ``sanitizer_host.model_provider_buzz`` instead; this ships nowhere.

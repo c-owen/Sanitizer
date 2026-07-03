@@ -1,4 +1,4 @@
-"""Structured-PII detection — rule-based, fast, auditable (FR-2).
+"""Structured-PII detection: rule-based, fast, auditable (FR-2).
 
 Each PII type is an independent, individually toggleable :class:`Detector`.
 Detection leans toward *recall* (the brief's R1: a missed item is the
@@ -96,7 +96,7 @@ class PhoneDetector(_RegexDetector):
 class CreditCardDetector(_RegexDetector):
     """Credit-card numbers (13–19 digits, optional space/dash groups).
 
-    Posture: precise — a Luhn checksum filters out random digit runs, so false
+    Posture: precise. A Luhn checksum filters out random digit runs, so false
     positives are rare without hurting recall on real cards. Canonical = digits.
     """
 
@@ -123,7 +123,7 @@ class CreditCardDetector(_RegexDetector):
 class SsnDetector(_RegexDetector):
     """US Social Security numbers in the dashed/spaced form ``DDD-DD-DDDD``.
 
-    Posture: precise — requires separators, so it won't match arbitrary 9-digit
+    Posture: precise. Requires separators, so it won't match arbitrary 9-digit
     runs (a precision/recall trade chosen to avoid mass false positives).
     """
 
@@ -164,7 +164,7 @@ class UrlDetector(_RegexDetector):
 
 
 def _luhn_ok(digits: str) -> bool:
-    """Luhn checksum — True if ``digits`` is a valid card-style number."""
+    """Luhn checksum: True if ``digits`` is a valid card-style number."""
     if not digits.isdigit() or not 13 <= len(digits) <= 19:
         return False
     total = 0
@@ -178,7 +178,7 @@ def _luhn_ok(digits: str) -> bool:
     return total % 10 == 0
 
 
-# Registry — order is the stable display/placeholder order.
+# Registry: order is the stable display/placeholder order.
 _DETECTOR_CLASSES: dict[str, type[_RegexDetector]] = {
     "email": EmailDetector,
     "phone": PhoneDetector,

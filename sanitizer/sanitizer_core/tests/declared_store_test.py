@@ -1,4 +1,4 @@
-"""Declared-terms store — the growable in-window declared list (US2/FR-16).
+"""Declared-terms store: the growable in-window declared list (US2/FR-16).
 
 Pure core (no buzz/Qt). Terms are raw ``category: term`` / bare lines; dedupe is by
 the term portion, case- and whitespace-insensitive, so a name is never declared

@@ -1,4 +1,4 @@
-"""Restore — reversibility and skip-unmatched (FR-7, PG4)."""
+"""Restore: reversibility and skip-unmatched (FR-7, PG4)."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ def test_multiword_round_trip():
 
 def test_case_variants_restore_to_declared_form():
     # Variants collapse to one placeholder, so restore yields the declared
-    # spelling everywhere — consistent by design (FR-3), documented behavior.
+    # spelling everywhere: consistent by design (FR-3), documented behavior.
     result = _sanitize("JANE and jane", ["Jane"])
     assert restore(result.scrubbed, result.key) == "Jane and Jane"
 

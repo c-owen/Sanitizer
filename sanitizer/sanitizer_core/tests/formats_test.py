@@ -1,4 +1,4 @@
-"""Format handlers — text & markdown, both directions (FR-24)."""
+"""Format handlers: text & markdown, both directions (FR-24)."""
 
 from __future__ import annotations
 

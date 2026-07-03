@@ -1,14 +1,14 @@
-"""Placeholder schemes — the readable stand-ins shown for removed items.
+"""Placeholder schemes: the readable stand-ins shown for removed items.
 
 A scheme must produce tokens that are unique per item and **robust** (FR-23):
 markdown rendering, copy/paste and light editing must not split or alter them, so
 restore stays reliable across the markdown round trip. Two properties matter:
 
-* **markdown-safe** — no markdown-active characters, so a renderer can't format or
+* **markdown-safe**: no markdown-active characters, so a renderer can't format or
   swallow the token (``[[x]]`` becomes a wiki-link in some flavors; ``<x>`` an HTML
-  tag; ``_x_`` italics — all unsafe);
-* **ASCII-safe** — encodes cleanly to ASCII, so copy/paste through a legacy or
-  ASCII-only app can't drop it (the Unicode ``⟦ ⟧`` brackets fail this — they once
+  tag; ``_x_`` italics, all unsafe);
+* **ASCII-safe**: encodes cleanly to ASCII, so copy/paste through a legacy or
+  ASCII-only app can't drop it (the Unicode ``⟦ ⟧`` brackets fail this: they once
   caused a cp1252 console crash).
 
 The default :class:`BraceScheme` (``{{LABEL-N}}``) satisfies both. The interface
@@ -60,7 +60,7 @@ class PlaceholderScheme(Protocol):
 
 
 class BraceScheme:
-    """``{{LABEL-N}}`` — ASCII-safe and markdown-safe (the default, FR-23).
+    """``{{LABEL-N}}``: ASCII-safe and markdown-safe (the default, FR-23).
 
     ``letter_labels`` render with letters (``{{PERSON-A}}``); all others number
     (``{{EMAIL-1}}``). Defaults to the entity labels (person/org/project/place).
@@ -78,7 +78,7 @@ class BraceScheme:
 
 
 class BracketScheme:
-    """``⟦LABEL-N⟧`` — markdown-safe but NOT ASCII-safe. Kept for callers that
+    """``⟦LABEL-N⟧``: markdown-safe but NOT ASCII-safe. Kept for callers that
     prefer the look and control their own UTF-8 sinks."""
 
     OPEN = "⟦"  # ⟦ MATHEMATICAL LEFT WHITE SQUARE BRACKET

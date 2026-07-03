@@ -1,4 +1,4 @@
-"""Host adapter for the suggestion model — structure, lazy imports, degradation.
+"""Host adapter for the suggestion model: structure, lazy imports, degradation.
 
 The adapter is the only host-coupled piece of the suggestion tier. These tests
 verify it without an ML environment: the module must import anywhere (heavy deps

@@ -1,13 +1,14 @@
-"""The on_complete pipeline — detectors from config, sidecar write, no mutation.
+"""The on_complete pipeline: detectors from config, sidecar write, no mutation.
 
 Runs on system Python (no Qt; suggestions are off by default so no ML import). The
 ``on_complete`` test goes through Buzz's real loader, so it skips where ``buzz`` is
-unavailable. Sidecar writes are redirected to a temp dir — never the real cache.
+unavailable. Sidecar writes are redirected to a temp dir, never the real cache.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -100,6 +101,20 @@ def test_meta_records_settings_snapshot(tmp_path):
     assert sidecar.meta["settings"]["suggestions"] is False
 
 
+def test_meta_records_the_given_source_name(tmp_path):
+    sanitize_to_sidecar(
+        "1", [_Seg(0, 1, "x")], {}, base_dir=str(tmp_path), source_name="meeting.mp3"
+    )
+    sidecar = persistence.read_sidecar(tmp_path / "1")
+    assert sidecar.meta["source_name"] == "meeting.mp3"
+
+
+def test_meta_source_name_defaults_to_none(tmp_path):
+    sanitize_to_sidecar("1", [_Seg(0, 1, "x")], {}, base_dir=str(tmp_path))
+    sidecar = persistence.read_sidecar(tmp_path / "1")
+    assert sidecar.meta["source_name"] is None
+
+
 # --- on_complete through the real plugin ------------------------------------
 def test_on_complete_writes_sidecar_without_touching_segments(tmp_path, monkeypatch):
     loader = pytest.importorskip("buzz.plugins.loader")
@@ -131,6 +146,56 @@ def test_on_complete_never_raises_into_host(tmp_path, monkeypatch):
 
     monkeypatch.setattr(pipeline, "sanitize_to_sidecar", _boom)
     plugin.on_complete("1", None, [_Seg(0, 1, "x")], _Ctx({}))  # must not raise
+
+
+@dataclass
+class _Task:
+    """Stands in for Buzz's ``FileTranscriptionTask``: only the fields the
+    plugin actually reads (it has no display-name field of its own)."""
+
+    file_path: str | None = None
+    url: str | None = None
+
+
+def test_on_complete_records_the_source_file_basename(tmp_path, monkeypatch):
+    loader = pytest.importorskip("buzz.plugins.loader")
+    plugin = loader.load_plugin_from_dir(str(_SANITIZER_DIR))
+    import sanitizer_host.paths as paths
+
+    monkeypatch.setattr(paths, "sanitizer_data_dir", lambda: str(tmp_path))
+
+    file_path = os.path.join("recordings", "council meeting.mp3")
+    plugin.on_complete("99", _Task(file_path=file_path), [_Seg(0, 1, "x")], _Ctx({}))
+
+    sidecar = persistence.read_sidecar(tmp_path / "99")
+    assert sidecar.meta["source_name"] == "council meeting.mp3"
+
+
+def test_on_complete_falls_back_to_url_with_no_file_path(tmp_path, monkeypatch):
+    loader = pytest.importorskip("buzz.plugins.loader")
+    plugin = loader.load_plugin_from_dir(str(_SANITIZER_DIR))
+    import sanitizer_host.paths as paths
+
+    monkeypatch.setattr(paths, "sanitizer_data_dir", lambda: str(tmp_path))
+
+    task = _Task(url="https://example.com/talk.mp3")
+    plugin.on_complete("99", task, [_Seg(0, 1, "x")], _Ctx({}))
+
+    sidecar = persistence.read_sidecar(tmp_path / "99")
+    assert sidecar.meta["source_name"] == "https://example.com/talk.mp3"
+
+
+def test_on_complete_with_no_task_records_no_source_name(tmp_path, monkeypatch):
+    loader = pytest.importorskip("buzz.plugins.loader")
+    plugin = loader.load_plugin_from_dir(str(_SANITIZER_DIR))
+    import sanitizer_host.paths as paths
+
+    monkeypatch.setattr(paths, "sanitizer_data_dir", lambda: str(tmp_path))
+
+    plugin.on_complete("99", None, [_Seg(0, 1, "x")], _Ctx({}))
+
+    sidecar = persistence.read_sidecar(tmp_path / "99")
+    assert sidecar.meta["source_name"] is None
 
 
 # --- Step D: unioned declared store (US2) -----------------------------------
@@ -222,4 +287,4 @@ def test_auto_apply_is_gated_on_having_reviewed(tmp_path, monkeypatch):
         {"declared_terms": "Jane"},
         base_dir=str(tmp_path),
     )
-    assert "Acme" in result.scrubbed_text  # still held — gate not satisfied
+    assert "Acme" in result.scrubbed_text  # still held: gate not satisfied

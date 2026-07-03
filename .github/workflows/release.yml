@@ -4,7 +4,7 @@ name: Release
 # (v*) is pushed -- this is what makes "download the latest zip from the repo"
 # actually true; pushing source alone does not, since dist/ is gitignored.
 #
-# To cut a release: git tag v0.7.1 && git push origin v0.7.1
+# To cut a release: git tag v0.7.2 && git push origin v0.7.2
 #
 # Runs a lightweight pre-publish gate (the pure sanitizer_core guarantee suite
 # only -- no buzz clone, no Qt libs, seconds not minutes) so a broken core can

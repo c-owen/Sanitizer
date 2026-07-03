@@ -1,4 +1,4 @@
-"""The Detector interface — the swappable detection-method seam (FR-14)."""
+"""The Detector interface: the swappable detection-method seam (FR-14)."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Sanitizer with PII + verification — clean flag, fail-closed, overlap, PGs."""
+"""Sanitizer with PII + verification: clean flag, fail-closed, overlap, PGs."""
 
 from __future__ import annotations
 
@@ -62,7 +62,7 @@ def test_disabled_type_is_left_untouched():  # FR-2
 
 
 class _MissesSecondDetector:
-    """Detects only the first 'SECRET' — a recall miss the gate must catch."""
+    """Detects only the first 'SECRET': a recall miss the gate must catch."""
 
     def detect(self, text):
         index = text.find("SECRET")

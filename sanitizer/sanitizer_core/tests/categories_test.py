@@ -1,4 +1,4 @@
-"""Semantic placeholder labels — categories + lettered entity indices (G3)."""
+"""Semantic placeholder labels: categories + lettered entity indices (G3)."""
 
 from __future__ import annotations
 

@@ -1,21 +1,21 @@
-"""Sanitizer's cross-transcript app state — a tiny preferences store.
+"""Sanitizer's cross-transcript app state: a tiny preferences store.
 
 Some facts outlive a single transcript *and* a single window, so they belong
 neither in a per-transcript sidecar (:mod:`sanitizer_core.persistence`) nor in Buzz's
 plugin config (which Sanitizer only reads). Three such facts live here:
 
-* ``has_reviewed`` — the user has completed at least one review. This **gates**
+* ``has_reviewed``: the user has completed at least one review. This **gates**
   the informed auto-apply offer (FR-12): Sanitizer never offers to auto-apply
   suggestions until the user has seen how review works at least once.
-* ``auto_apply_suggestions`` — the user's informed opt-in (FR-12). When set, the
+* ``auto_apply_suggestions``: the user's informed opt-in (FR-12). When set, the
   *host* auto-approves suggestions after sanitization. The core never does this
   (it still holds suggestions PENDING, FR-9); this only records the choice.
-* ``key_note_dismissed`` — the one-time "the key is the secret" teaching (US6)
+* ``key_note_dismissed``: the one-time "the key is the secret" teaching (US6)
   has been dismissed, so it shows once and never again.
 
 Pure filesystem + JSON; the directory is **injected by the host** (the core never
 decides where Buzz's cache lives), exactly like :mod:`sanitizer_core.persistence`.
-Reads are total — a missing or corrupt file yields defaults, never an error — so a
+Reads are total: a missing or corrupt file yields defaults, never an error, so a
 first run and a damaged store both behave as "nothing decided yet".
 """
 

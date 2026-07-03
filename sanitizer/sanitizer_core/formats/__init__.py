@@ -1,4 +1,4 @@
-"""Import/export format handlers — the swappable format seam (FR-24, FR-14).
+"""Import/export format handlers: the swappable format seam (FR-24, FR-14).
 
 v1 ships ``text`` and ``markdown``, both directions. Adding a new format (a new
 file here, e.g. SRT/VTT in P2) must not require touching detection, the sanitizer

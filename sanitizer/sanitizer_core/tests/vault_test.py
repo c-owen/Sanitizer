@@ -1,4 +1,4 @@
-"""Vault — consistent, injective, reversible placeholder allocation (FR-3, PG4)."""
+"""Vault: consistent, injective, reversible placeholder allocation (FR-3, PG4)."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""PII detectors — per-type precision/recall and toggling (FR-2)."""
+"""PII detectors: per-type precision/recall and toggling (FR-2)."""
 
 from __future__ import annotations
 

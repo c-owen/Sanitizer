@@ -1,8 +1,8 @@
-"""The verification gate — the independent re-check that fails closed (FR-6, PG7).
+"""The verification gate: the independent re-check that fails closed (FR-6, PG7).
 
 After substitution, the gate re-scans the scrubbed output with the *guaranteed*
 detectors (declared + enabled PII). If any of them still matches, a declared term
-or enabled PII type leaked, so the result is **not clean** — and the host must
+or enabled PII type leaked, so the result is **not clean**, and the host must
 refuse to present it as safe or auto-copy it (PG7). Model suggestions are a
 separate, review-gated tier and are deliberately **not** verified here.
 """

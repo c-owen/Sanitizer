@@ -2,7 +2,7 @@
 
 A declared term or a model suggestion carries a *category*; the placeholder
 label is the prefix the LLM sees. Semantic labels ("PERSON-A told PERSON-B about
-PROJECT-A") read far better than opaque ones ("TERM-1 told TERM-2 …") — the
+PROJECT-A") read far better than opaque ones ("TERM-1 told TERM-2 …"): the
 brief's usability goal (G3) and the "PERSON-A"-style glossary entry.
 
 Entity categories render with **letters** (PERSON-A, PERSON-B …) so they read

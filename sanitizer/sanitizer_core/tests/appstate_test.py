@@ -1,4 +1,4 @@
-"""Preferences store — cross-transcript app state (US6 teaching, FR-12 gate).
+"""Preferences store: cross-transcript app state (US6 teaching, FR-12 gate).
 
 Pure core (no buzz/Qt); runs on system Python. Reads must be total: a missing or
 corrupt store yields defaults, never an error.

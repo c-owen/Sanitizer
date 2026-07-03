@@ -1,7 +1,7 @@
-"""Core domain model for Sanitizer — host-independent (no buzz, no Qt).
+"""Core domain model for Sanitizer: host-independent (no buzz, no Qt).
 
 These types describe *what was detected* and *how it was replaced*, as plain
-data with no dependency on Buzz, Qt or I/O — so the sanitization guarantees can
+data with no dependency on Buzz, Qt or I/O, so the sanitization guarantees can
 be tested in isolation (the brief's "verifiable independently" mandate).
 """
 
@@ -12,15 +12,15 @@ from dataclasses import dataclass, field
 
 
 class TrustTier(enum.IntEnum):
-    """How much a detection is trusted — and thus whether it is removed
+    """How much a detection is trusted, and thus whether it is removed
     automatically. Lower value == higher trust (wins overlap resolution).
 
     Glossary order: declared > pattern-detected PII > model-suggested.
     """
 
-    DECLARED = 0  # the user's own list — authoritative, removed automatically
-    PII = 1  # structured pattern match (phone, email, …) — Phase 2
-    SUGGESTED = 2  # model proposal — review-gated, never auto-applied (Phase 4)
+    DECLARED = 0  # the user's own list: authoritative, removed automatically
+    PII = 1  # structured pattern match (phone, email, …), Phase 2
+    SUGGESTED = 2  # model proposal: review-gated, never auto-applied (Phase 4)
 
 
 class DecisionState(enum.Enum):

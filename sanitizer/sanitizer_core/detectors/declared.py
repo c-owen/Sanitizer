@@ -1,7 +1,7 @@
-"""Declared-list detection — the highest-trust tier (FR-1).
+"""Declared-list detection: the highest-trust tier (FR-1).
 
-Detects every occurrence of a user-declared term — including case, possessive
-and internal-whitespace variants — without corrupting substrings ("Jane" must
+Detects every occurrence of a user-declared term, including case, possessive
+and internal-whitespace variants, without corrupting substrings ("Jane" must
 never match inside "Janet").
 
 Terms may be **categorized** so the placeholder reads well: pass a

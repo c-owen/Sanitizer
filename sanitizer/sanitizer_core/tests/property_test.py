@@ -1,7 +1,7 @@
 """Property-based checks for the two load-bearing guarantees (FR-1, PG4).
 
 `hypothesis` is a test-only dependency; the suite skips cleanly without it (the
-explicit example tests already cover these cases — this widens the input space).
+explicit example tests already cover these cases; this widens the input space).
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""Plain-text format handler — the identity round trip (FR-24)."""
+"""Plain-text format handler: the identity round trip (FR-24)."""
 
 from __future__ import annotations
 

@@ -6,12 +6,12 @@ touches an ML library or Buzz, so ``sanitizer_core`` stays host-independent. The
 is a small zero-shot NER model that:
 
 * is **downloaded on first use** via Buzz's ``download_from_huggingface`` into the
-  shared model cache (``~/.cache/Buzz/models``) — nothing is bundled (FR-13);
+  shared model cache (``~/.cache/Buzz/models``), with nothing bundled (FR-13);
 * is **reused offline** thereafter (``local_files_only``);
 * runs on **CPU**, cross-platform (FR-15).
 
-All heavy imports (``gliner``, ``buzz``, ``huggingface_hub``) are **lazy** — inside
-the methods that need them — so this module imports cleanly in any environment
+All heavy imports (``gliner``, ``buzz``, ``huggingface_hub``) are **lazy** (inside
+the methods that need them), so this module imports cleanly in any environment
 (headless, no ML deps) and only pays for the model when a suggestion is actually
 requested. The real download + inference are exercised by the opt-in integration
 test (set ``SANITIZER_RUN_MODEL_TEST=1``); unit tests inject a stub provider instead.
@@ -50,7 +50,7 @@ _GLINER_PATTERNS = [
 # GLiNER's multilingual weights are self-contained, but its config points the
 # *tokenizer* and *encoder config* at a base backbone (e.g. microsoft/mdeberta-v3-base)
 # that is NOT bundled in the gliner repo. We fetch those small files (config +
-# tokenizer) too — but never the base *weights* (gliner ships its own fine-tuned
+# tokenizer) too, but never the base *weights* (gliner ships its own fine-tuned
 # encoder). Without them, loading reaches huggingface.co for the tokenizer → the
 # "couldn't connect ... couldn't find in cache" failure.
 _BASE_PATTERNS = [
@@ -105,7 +105,7 @@ class BuzzGlinerProvider:
     Guarantees: ``predict`` returns spans that index the given text, scored in
     ``[0, 1]``; the model loads once (cached) and runs on CPU. ``labels`` are the
     zero-shot entity types to look for. Raises ``RuntimeError`` if the model can't
-    be fetched or loaded — the :class:`ModelSuggestionDetector` swallows that and
+    be fetched or loaded: the :class:`ModelSuggestionDetector` swallows that and
     degrades to no suggestions, so the guaranteed path is never affected.
     """
 
@@ -155,8 +155,8 @@ class BuzzGlinerProvider:
         _ensure_vendor_on_path()  # make the bundled gliner importable (no pip)
         from gliner import GLiNER  # lazy heavy import (vendored in sanitizer/_vendor)
 
-        # Load the gliner files from the local snapshot dir — an existing path makes
-        # GLiNER's _download_model skip all hub access for them — and let it pull the
+        # Load the gliner files from the local snapshot dir (an existing path makes
+        # GLiNER's _download_model skip all hub access for them), and let it pull the
         # *base* tokenizer + encoder config from Buzz's cache (fetched in
         # _ensure_downloaded) by threading cache_dir + local_files_only. Passing the
         # repo id instead, or omitting these, makes GLiNER re-resolve the backbone
@@ -178,7 +178,7 @@ class BuzzGlinerProvider:
         cached; return the local GLiNER snapshot directory.
 
         gliner_multi loads its tokenizer + encoder config from the base model named in
-        ``gliner_config.json`` (not bundled), so those are fetched too — but never the
+        ``gliner_config.json`` (not bundled), so those are fetched too, but never the
         base *weights* (the fine-tuned encoder weights ship in the gliner repo).
         """
         gliner_dir = self._ensure_repo(self._repo_id, _GLINER_PATTERNS)

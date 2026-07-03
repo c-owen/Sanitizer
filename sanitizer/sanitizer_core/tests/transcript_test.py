@@ -1,8 +1,8 @@
-"""Transcript-level sanitization — per-segment timing, shared placeholders, merge.
+"""Transcript-level sanitization: per-segment timing, shared placeholders, merge.
 
 Covers PG5 (timing preserved), cross-segment placeholder consistency, the merged
 review items, fail-closed across segments, and the apply_review re-derivation used
-when the user edits decisions (Phase 5b) — plus JSON round-tripping for the sidecar.
+when the user edits decisions (Phase 5b), plus JSON round-tripping for the sidecar.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ class Seg:
 
 
 class _MissesSecondDetector:
-    """Detects only the first 'SECRET' in a text — a recall miss the gate catches."""
+    """Detects only the first 'SECRET' in a text: a recall miss the gate catches."""
 
     def detect(self, text):
         index = text.find("SECRET")
@@ -56,7 +56,7 @@ def _declared(*terms):
 class _StubSuggest:
     """A stand-in suggestion detector: flags fixed surfaces wherever they appear in
     the text it is handed (a window), like the real model would. Each spec is
-    ``(surface, label, type[, score])`` — score defaults to 1.0."""
+    ``(surface, label, type[, score])``; score defaults to 1.0."""
 
     tier = TrustTier.SUGGESTED
 
@@ -104,7 +104,7 @@ def test_same_value_shares_placeholder_across_segments():
 
 
 def test_scrubbed_text_joins_close_segments_as_one_paragraph():
-    # A tiny (< 2s) gap between segments reads as continuous speech — space-joined
+    # A tiny (< 2s) gap between segments reads as continuous speech: space-joined
     # prose, matching Buzz's own plain-text export, not one line per segment.
     segments = [Seg(0, 1, "Call Jane"), Seg(1, 2, "or Bob")]
     result = sanitize_transcript(segments, _declared("Jane", "Bob"))
@@ -113,7 +113,7 @@ def test_scrubbed_text_joins_close_segments_as_one_paragraph():
 
 
 def test_scrubbed_text_breaks_paragraph_on_a_real_pause():
-    # A >= 2s gap between segments is a real pause — starts a new paragraph
+    # A >= 2s gap between segments is a real pause: starts a new paragraph
     # (matches Buzz's BUZZ_PARAGRAPH_SPLIT_TIME default of 2000ms).
     segments = [Seg(0, 1000, "Call Jane"), Seg(3000, 4000, "or Bob")]
     result = sanitize_transcript(segments, _declared("Jane", "Bob"))

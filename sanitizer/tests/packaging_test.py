@@ -1,6 +1,6 @@
 """Tests for the plugin packaging script (``tools/package.py``).
 
-Pure standard library — runnable in any environment with pytest, no Buzz or
+Pure standard library: runnable in any environment with pytest, no Buzz or
 PyQt6 required.
 """
 

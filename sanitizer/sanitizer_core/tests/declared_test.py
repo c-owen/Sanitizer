@@ -1,4 +1,4 @@
-"""DeclaredListDetector — substring safety, variants, multi-word (FR-1)."""
+"""DeclaredListDetector: substring safety, variants, multi-word (FR-1)."""
 
 from __future__ import annotations
 

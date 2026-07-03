@@ -1,16 +1,16 @@
-"""Sidecar-backed review window — the v2 UX build (Steps A–D).
+"""Sidecar-backed review window: the v2 UX build (Steps A-D).
 
 **One window, three modes** (a persistent safety spine spans all three):
 
-* **Review** — the home surface: a master-detail `QSplitter`. Left is the two-zone
+* **Review**: the home surface, a master-detail `QSplitter`. Left is the two-zone
   decision **tree** (▣ REMOVED guaranteed · ◇ SUGGESTIONS held w/ Approve/Reject ·
   ▸ Keeping-in-cleartext). Right is the **context / side-by-side** pane (UX-2): on
   row selection it shows the original in context vs the substitution ("Is removing
   *this* one correct?"), built from the item's ``placements``. In the empty case the
   split is replaced by a "proof it ran" panel with scan evidence (US8).
-* **Send out** — one prominent *Copy scrubbed text* + a collapsed preview, then the
+* **Send out**: one prominent *Copy scrubbed text* + a collapsed preview, then the
   **fenced key** (the secret, PG8/UX-6). Unsafe → a blocking wall, no copyable text.
-* **Restore** — the mirror: paste reply → restore → result, with an **unresolved-tag
+* **Restore**: the mirror, paste reply → restore → result, with an **unresolved-tag
   report** (`⚠ N still unresolved`, FR-7).
 
 Safety carries across all modes: the spine states the verdict in word+glyph (UX-5),
@@ -102,7 +102,7 @@ _SUGGESTION_TYPES: tuple[tuple[str, str], ...] = (
     ("project", "Projects"),
 )
 # Sort keys offered for the pending suggestions (id → label). "Rarity" surfaces the
-# rarely-named first — often the private individual in a sea of public figures.
+# rarely-named first: often the private individual in a sea of public figures.
 _SUGGESTION_SORTS: tuple[tuple[str, str], ...] = (
     ("confidence", "Confidence (high → low)"),
     ("rarity", "Rarity (rare → common)"),
@@ -135,7 +135,7 @@ _HL_SUB = "QPlainTextEdit { background:#dfe9df; }"
 _EVIDENCE = "background:#fbfbfa; border:1px solid #b9b6b1; padding:8px;"
 _NOTE = "background:#eaf0f2; color:#28414c; padding:6px;"
 
-# Grayscale-first window styling. Only the base chrome — semantic states (spine,
+# Grayscale-first window styling, limited to the base chrome. Semantic states (spine,
 # walls, key header, highlights) keep their own inline styles, which win over this.
 _WINDOW_QSS = """
 QWidget#sanitizer_review_window { background:#f2f1ef; color:#1d1c1a; }
@@ -153,7 +153,7 @@ QLineEdit { background:#ffffff; border:1px solid #b9b6b1; padding:3px 6px; }
 
 def _default_suggestion_provider():
     """Build the real (vendored GLiNER, via Buzz) suggestion provider. Imported here
-    so it stays lazy — the heavy path is only touched when the user runs suggestions.
+    so it stays lazy: the heavy path is only touched when the user runs suggestions.
     """
     from sanitizer_host.model_provider_buzz import BuzzGlinerProvider
 
@@ -164,7 +164,7 @@ class _SuggestionWorker(QThread):
     """Runs the suggestion model off the GUI thread (download + inference are slow).
 
     Emits ``status`` updates, then either ``ready`` with the found PENDING items or
-    ``failed`` with a human-readable reason. Never raises into the event loop — any
+    ``failed`` with a human-readable reason. Never raises into the event loop: any
     failure (model unavailable, download error, …) becomes a ``failed`` signal, so
     "no suggestions" is never silent. ``provider_factory`` is injected (tests pass a
     stub); the default builds the vendored-GLiNER provider.
@@ -201,8 +201,8 @@ class _SuggestionWorker(QThread):
             items = suggest_items(
                 self._segments, detector, known_canonicals=self._known
             )
-            # The detector swallows model failures (FR-9) — so distinguish "the model
-            # broke" from "it ran and found nothing", never conflating them.
+            # The detector swallows model failures (FR-9), so distinguish "the model
+            # broke" from "it ran and found nothing": never conflate the two.
             if detector.last_error:
                 self.failed.emit(detector.last_error)
             else:
@@ -296,7 +296,7 @@ class ReviewWindow(QWidget):
         self._spine_label.setWordWrap(True)
         layout.addWidget(self._spine_label)
 
-        # Mode tabs — one window, three modes.
+        # Mode tabs: one window, three modes.
         tab_row = QHBoxLayout()
         tab_row.setSpacing(4)
         self._tab_buttons: dict[str, QToolButton] = {}
@@ -364,7 +364,7 @@ class ReviewWindow(QWidget):
         self._edit_list_button = QPushButton(_("Edit my declared list…"))
         self._edit_list_button.clicked.connect(self._open_declared_list_editor)
         bulk_row.addWidget(self._edit_list_button)
-        # On-demand model suggestions — opt-in and independent of declared removal
+        # On-demand model suggestions, opt-in and independent of declared removal
         # (a user may want one, the other, or neither). Runs on a worker thread.
         self._suggest_button = QPushButton(_("✨ Run suggestions"))
         self._suggest_button.setToolTip(
@@ -524,10 +524,10 @@ class ReviewWindow(QWidget):
         return frame
 
     def _build_miss_strip(self) -> QWidget:
-        """The reverse 'not touched — confirm these' strip (UX-3 / FR-22).
+        """The reverse 'not touched (confirm these)' strip (UX-3 / FR-22).
 
         Populated with entity-shaped candidates still in cleartext; clicking one
-        redacts it everywhere. Reads 'candidates to confirm', never 'all clear' —
+        redacts it everywhere. Reads 'candidates to confirm', never 'all clear',
         so it is simply hidden when there are none.
         """
         self._miss_strip = QFrame()
@@ -670,7 +670,7 @@ class ReviewWindow(QWidget):
         key_header.setStyleSheet(_KEY_HEADER)
         key.addWidget(key_header)
 
-        # First-use teaching (US6): shown once, dismissible, tied to Send out — not
+        # First-use teaching (US6): shown once, dismissible, tied to Send out, not
         # an upfront modal. Visibility is driven from prefs (see _refresh_key_note).
         self._key_note = QFrame()
         note_row = QHBoxLayout(self._key_note)
@@ -761,7 +761,10 @@ class ReviewWindow(QWidget):
         self._selector.blockSignals(True)
         self._selector.clear()
         for transcription_id in ids:
-            self._selector.addItem(transcription_id, transcription_id)
+            directory = os.path.join(self._base_dir, transcription_id)
+            meta = persistence.read_meta(directory)
+            label = meta.get("source_name") or transcription_id
+            self._selector.addItem(label, transcription_id)
         self._selector.blockSignals(False)
         if ids:
             self._selector.setCurrentIndex(0)
@@ -833,14 +836,14 @@ class ReviewWindow(QWidget):
         self._refresh_auto_apply()
         self._refresh_key_note()
 
-        # Send out — safe copy area vs the blocking wall (PG7: withhold when unsafe).
+        # Send out: safe copy area vs the blocking wall (PG7: withhold when unsafe).
         self._sendout_safe.setVisible(clean)
         self._sendout_wall.setVisible(not clean)
         self._preview_edit.setPlainText(self._scrubbed_text if clean else "")
         self._copy_button.setEnabled(clean and bool(self._scrubbed_text))
         self._empty_copy_button.setEnabled(clean and bool(self._scrubbed_text))
-        # Suggestions can run on any loaded transcript (even a "nothing found" one —
-        # the model may still spot a name the guaranteed detectors don't).
+        # Suggestions can run on any loaded transcript, even a "nothing found" one:
+        # the model may still spot a name the guaranteed detectors don't.
         self._suggest_button.setEnabled(self._suggest_worker is None)
 
         self._key_text = "\n".join(
@@ -938,7 +941,7 @@ class ReviewWindow(QWidget):
 
         self._group_removed.setExpanded(True)
         self._group_cleartext.setExpanded(False)
-        # The SUGGESTIONS zone is a live view over the computed set — grouped, sorted
+        # The SUGGESTIONS zone is a live view over the computed set: grouped, sorted,
         # and filtered by the triage controls. It also re-applies the text filter.
         self._render_suggestions(items)
         self._apply_tree_widths()
@@ -948,7 +951,7 @@ class ReviewWindow(QWidget):
         """(Re)build only the SUGGESTIONS zone from the current triage filters.
 
         Grouped by type, sorted, with per-type and shown-wide bulk actions; the count
-        reads "N of M shown". Cheap enough to call on every slider tick — it rebuilds
+        reads "N of M shown". Cheap enough to call on every slider tick: it rebuilds
         just this zone, leaving REMOVED / Keeping-in-cleartext (and their state) alone.
         This is the ~222-suggestions answer: one model run, then narrow it live.
         """
@@ -965,7 +968,7 @@ class ReviewWindow(QWidget):
         pending = [i for i in suggestions if i.state == DecisionState.PENDING]
         approved = [i for i in suggestions if i.state == DecisionState.APPROVED]
         # The triage filters (score / type / min-mentions) narrow the PENDING pile.
-        # APPROVED suggestions are already-made decisions — they stay visible as the
+        # APPROVED suggestions are already-made decisions: they stay visible as the
         # record of what was removed, even for a toggled-off type (an audit trail you
         # must never lose by fiddling a view control).
         shown_pending = [i for i in pending if self._passes_suggestion(i)]
@@ -1114,7 +1117,7 @@ class ReviewWindow(QWidget):
             box.addWidget(reject)
             self._tree.setItemWidget(row, 3, holder)
             self._suggestion_buttons[item.canonical] = (approve, reject)
-        else:  # an approved suggestion — decided, no buttons
+        else:  # an approved suggestion: decided, no buttons
             row.setText(3, _("approved · removed"))
             font = row.font(3)
             font.setItalic(True)
@@ -1374,7 +1377,7 @@ class ReviewWindow(QWidget):
             item.state = DecisionState.REJECTED
 
     def _rederive_and_persist(self) -> None:
-        """Re-derive scrubbed + key from the item states, refresh, and persist —
+        """Re-derive scrubbed + key from the item states, refresh, and persist,
         without marking the run reviewed (used when items change but the user hasn't
         made a decision yet, e.g. suggestions just arrived)."""
         sidecar = self._sidecar
@@ -1427,7 +1430,7 @@ class ReviewWindow(QWidget):
         worker.start()
 
     def _suggest_result_is_stale(self) -> bool:
-        """True if the loaded transcript changed since the scan started — the result
+        """True if the loaded transcript changed since the scan started: the result
         was located against the old segments, so applying it would corrupt this one."""
         return self._sidecar is None or self._current_dir != self._suggest_source_dir
 
@@ -1458,7 +1461,7 @@ class ReviewWindow(QWidget):
         if self._suggest_result_is_stale():
             self._suggest_status.setText("")
             return
-        # Never silent — surface *why* on screen, not only in the log.
+        # Never silent: surface *why* on screen, not only in the log.
         self._suggest_status.setText(_("Unavailable — {reason}").format(reason=reason))
         self._toast(_("Couldn't run suggestions: {reason}").format(reason=reason))
 
@@ -1491,7 +1494,7 @@ class ReviewWindow(QWidget):
         self._rerender_suggestions_view()
 
     def _rerender_suggestions_view(self) -> None:
-        """Re-render only the suggestions zone from the current filters — a pure view
+        """Re-render only the suggestions zone from the current filters: a pure view
         change (no state edit, no persist), instant even at hundreds of rows."""
         if self._sidecar is not None:
             self._render_suggestions(self._sidecar.items)
@@ -1506,7 +1509,7 @@ class ReviewWindow(QWidget):
             logger.exception("Sanitizer: failed to persist preferences.")
 
     def _mark_reviewed(self) -> None:
-        """Record that the user has reviewed at least once — the gate for FR-12."""
+        """Record that the user has reviewed at least once: the gate for FR-12."""
         if not self._prefs.has_reviewed:
             self._prefs.has_reviewed = True
             self._save_prefs()
@@ -1569,7 +1572,7 @@ class ReviewWindow(QWidget):
             walk(group)
 
         # A type subgroup whose every row was filtered out would otherwise leave a
-        # dangling "People (…)" header (with its bulk buttons) over nothing — hide it.
+        # dangling "People (…)" header (with its bulk buttons) over nothing. Hide it.
         for index in range(self._group_suggestions.childCount()):
             subgroup = self._group_suggestions.child(index)
             visible = any(
@@ -1616,7 +1619,7 @@ class ReviewWindow(QWidget):
         )
 
     def _copy_scrubbed(self) -> None:
-        # PG7: while unsafe there is NO reachable copy path — the handler refuses
+        # PG7: while unsafe there is NO reachable copy path. The handler refuses
         # even if invoked directly, and the text isn't in a widget to begin with.
         if not self._clean or not self._scrubbed_text:
             return
@@ -1671,8 +1674,8 @@ class ReviewWindow(QWidget):
 class _DeclaredListEditor(QDialog):
     """In-window editor for Sanitizer's own declared-terms list (US2).
 
-    These are the terms Sanitizer manages itself — grown by "add to my list" while
-    catching a miss and by this editor — which the pipeline **unions** with the list
+    These are the terms Sanitizer manages itself, grown by "add to my list" while
+    catching a miss and by this editor, which the pipeline **unions** with the list
     in Buzz's plugin settings on every future transcript. So editing here changes
     what Sanitizer removes going forward, not just in the current transcript. Backed by
     :mod:`sanitizer_core.declared_store`; ``base_dir`` is injected (tests pass a temp

@@ -1,9 +1,9 @@
-"""Locale files are complete and safe — 14 files, valid JSON, no empty values.
+"""Locale files are complete and safe: 14 files, valid JSON, no empty values.
 
 Buzz's plugin translator falls back to the English source only because an empty
 value is *falsy*; a key mapped to ``""`` therefore **blanks that string in the UI**
 (see ``buzz/buzz/plugins/AGENTS.md``: "Never use an empty string as a translation
-value"). This guards every bundled locale against that trap — each file must be a
+value"). This guards every bundled locale against that trap: each file must be a
 JSON object and must never map a key to an empty/whitespace-only string. Pure stdlib.
 """
 

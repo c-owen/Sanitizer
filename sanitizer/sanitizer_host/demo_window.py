@@ -2,7 +2,7 @@
 
 A throwaway "playground" reachable from the Sanitizer menu: paste declared terms and
 text, press Sanitize, copy the scrubbed text out, then paste a reply back and
-Restore — exercising the full round trip (including the markdown trip, since the
+Restore, exercising the full round trip (including the markdown trip, since the
 ``{{…}}`` placeholders survive formatting). Proves ``sanitizer_core`` works inside the
 real app, ahead of the full review/restore UI (Phase 5, which replaces this).
 """

@@ -1,10 +1,10 @@
-"""Model-suggestion detection — the additive, review-gated tier (FR-9/FR-15).
+"""Model-suggestion detection: the additive, review-gated tier (FR-9/FR-15).
 
 A small on-device zero-shot model proposes *undeclared* names, organizations,
 locations and obvious codename/project mentions. These are **suggestions**, not
 guarantees: they enter the ``SUGGESTED`` tier, are always held PENDING for the
 user's one-click review (FR-9), are never auto-applied, and are deliberately
-excluded from the verification gate (PG6 — the guaranteed set stays predictable).
+excluded from the verification gate (PG6: the guaranteed set stays predictable).
 
 This module is **host-independent**. The model itself lives behind a
 :class:`ModelProvider` **port** so ``sanitizer_core`` never imports an ML library or
@@ -115,7 +115,7 @@ class ModelSuggestionDetector:
     Assumes: ``text`` is the text spans index into.
     Guarantees: every returned :class:`Detection` is ``SUGGESTED`` tier with
     ``value == text[span.start:span.end]`` (substring-safe), carries a categorized
-    label/reason, and never crashes the pipeline — if the provider raises (e.g. the
+    label/reason, and never crashes the pipeline: if the provider raises (e.g. the
     model is unavailable), detection degrades to an empty list so the guaranteed
     path is unaffected.
     """
@@ -141,7 +141,7 @@ class ModelSuggestionDetector:
                 {key.lower(): value for key, value in category_map.items()}
             )
         # Observability. This tier degrades to ``[]`` on any provider failure so the
-        # guaranteed path is never affected — but a silent ``[]`` is indistinguishable
+        # guaranteed path is never affected, but a silent ``[]`` is indistinguishable
         # from "the model ran and found nothing". These record *why*, so a caller (the
         # on-demand "Run suggestions" flow) can tell the user a missing/broken model
         # apart from an empty result, instead of reporting a false "all clear".

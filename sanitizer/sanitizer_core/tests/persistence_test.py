@@ -1,4 +1,4 @@
-"""Sidecar persistence — write/read round trip, completeness marker, listing.
+"""Sidecar persistence: write/read round trip, completeness marker, listing.
 
 Pure filesystem (uses tmp_path); no buzz/Qt. Confirms the sidecar preserves the
 review items, scrubbed segments and the (separate) key, that an incomplete write
@@ -98,3 +98,17 @@ def test_list_sidecars_orders_newest_first(tmp_path):
 
 def test_list_sidecars_empty_base(tmp_path):
     assert persistence.list_sidecars(tmp_path / "absent") == []
+
+
+def test_read_meta_returns_just_the_meta_dict(tmp_path):
+    sanitization = _sanitize()
+    directory = tmp_path / "1"
+    meta = _meta(sanitization)
+    meta["source_name"] = "meeting.mp3"
+    persistence.write_sidecar(directory, sanitization, meta)
+
+    assert persistence.read_meta(directory) == meta
+
+
+def test_read_meta_missing_sidecar_reads_as_empty_dict(tmp_path):
+    assert persistence.read_meta(tmp_path / "nope") == {}

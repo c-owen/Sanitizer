@@ -1,4 +1,4 @@
-"""Placeholder robustness — the markdown / copy-paste / edit reliability gate (FR-23).
+"""Placeholder robustness: the markdown / copy-paste / edit reliability gate (FR-23).
 
 The placeholder must survive the markdown round trip so restore stays reliable.
 These tests pin the two properties (ASCII-safe, markdown-safe) and prove restore

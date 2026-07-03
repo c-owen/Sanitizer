@@ -2,7 +2,7 @@
 
 Host glue around the pure core. It builds detectors from the plugin's config, runs
 :func:`~sanitizer_core.transcript.sanitize_transcript` over the **saved** segments
-(read-only — the stored transcript is NEVER modified, PG5), and writes the sidecar
+(read-only: the stored transcript is NEVER modified, PG5), and writes the sidecar
 keyed by ``transcription_id`` (the key in its own file, PG8).
 
 The default config is the **guaranteed path only** (declared + PII), fully offline
@@ -50,7 +50,7 @@ def build_detectors(config: dict, *, data_dir: str | None = None) -> list:
     """Assemble the detector set from plugin config (guaranteed path by default).
 
     Declared terms are the **union** of the config textarea and Sanitizer's own
-    declared-terms store (``data_dir``, when given) — so a term the user added
+    declared-terms store (``data_dir``, when given), so a term the user added
     in-window (US2/FR-16) applies to this and every later transcript, not just the
     one where it was caught.
     """
@@ -80,12 +80,17 @@ def _declared_text(config: dict, data_dir: str | None) -> str:
     return text
 
 
-def sanitize_to_sidecar(transcription_id, segments, config: dict, *, base_dir=None):
+def sanitize_to_sidecar(
+    transcription_id, segments, config: dict, *, base_dir=None, source_name=None
+):
     """Sanitize ``segments`` and persist the sidecar; return (directory, result).
 
     ``base_dir`` overrides the real Buzz cache location (used by tests) and is also
     where Sanitizer's declared-terms store and preferences live. The stored transcript
-    is never touched — only the sidecar is written.
+    is never touched: only the sidecar is written. ``source_name``, when given, is a
+    display label (e.g. the source file's basename) recorded in ``meta.json`` so the
+    review window can show it instead of the bare transcription id; Buzz has no
+    public lookup for it after the fact, so the caller must capture it at hook time.
     """
     data_dir = base_dir if base_dir is not None else _data_dir()
     detectors = build_detectors(config, data_dir=data_dir)
@@ -107,6 +112,7 @@ def sanitize_to_sidecar(transcription_id, segments, config: dict, *, base_dir=No
     meta = {
         "sanitizer_version": core_version,
         "transcription_id": str(transcription_id),
+        "source_name": source_name,
         "clean": sanitization.clean,
         "removed_items": sanitization.removed_items,
         "pending_items": sanitization.pending_items,
@@ -130,7 +136,7 @@ def _auto_apply_suggestions(sanitization) -> int:
 
     Mutates ``sanitization`` in place: flips each PENDING suggestion to APPROVED,
     allocates a fresh placeholder, then re-derives the scrubbed segments + key via
-    :func:`~sanitizer_core.transcript.apply_review`. ``clean`` is unaffected —
+    :func:`~sanitizer_core.transcript.apply_review`. ``clean`` is unaffected:
     suggestions are never gated, so approving them only adds removals.
     """
     existing = {i.placeholder for i in sanitization.items if i.placeholder}

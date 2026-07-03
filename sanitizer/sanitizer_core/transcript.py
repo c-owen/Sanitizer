@@ -1,14 +1,14 @@
-"""Transcript-level sanitization — per-segment, timing-preserving (Phase 5, PG5).
+"""Transcript-level sanitization: per-segment, timing-preserving (Phase 5, PG5).
 
 Runs the single-text :func:`~sanitizer_core.sanitizer.sanitize` over each segment with
 one **shared** :class:`~sanitizer_core.vault.Vault`, so placeholders stay consistent
 across the whole transcript while each segment's ``start``/``end`` is left
 untouched (PG5). The per-segment decisions are merged into transcript-level
-**review items** (one per distinct value, carrying every placement) — the unit the
+**review items** (one per distinct value, carrying every placement), the unit the
 review surface and the sidecar work with.
 
 Host-independent: operates on plain segment-like inputs (anything with
-``start``/``end``/``text``) and core types only — no buzz, no Qt.
+``start``/``end``/``text``) and core types only, no buzz, no Qt.
 """
 
 from __future__ import annotations
@@ -56,13 +56,13 @@ class Placement:
 
 @dataclass
 class ReviewItem:
-    """One distinct sensitive value across the whole transcript — a review row.
+    """One distinct sensitive value across the whole transcript: a review row.
 
     ``placeholder`` is empty while a suggestion is still PENDING (it is allocated
     on approval, Phase 5b). ``placements`` lists every occurrence; ``count`` is how
     many. ``state`` drives whether the item is applied to the scrubbed text.
     ``score`` is the model's confidence in ``[0, 1]`` for a SUGGESTED item (the max
-    over its sightings) — the value the triage confidence filter sorts/filters on;
+    over its sightings), the value the triage confidence filter sorts/filters on;
     it is ``1.0`` for guaranteed (declared/PII) items, which are never score-gated.
     """
 
@@ -93,7 +93,7 @@ class SanitizedSegment:
 
 
 # Matches Buzz's own plain-text export default (``BUZZ_PARAGRAPH_SPLIT_TIME`` in
-# ``file_transcriber.py``) — a pause of this length or more starts a new paragraph.
+# ``file_transcriber.py``): a pause of this length or more starts a new paragraph.
 # ``start``/``end`` are in milliseconds, Buzz's own unit (the only host today).
 _PARAGRAPH_GAP_MS = 2000
 
@@ -280,7 +280,7 @@ def next_free_placeholder(
 # --- miss-catching (UX-3 / FR-22 / FR-16) -----------------------------------
 @dataclass(frozen=True)
 class MissCandidate:
-    """An entity-shaped token still in cleartext that Sanitizer did NOT remove — a
+    """An entity-shaped token still in cleartext that Sanitizer did NOT remove: a
     candidate for the user to confirm (never an "all clear"). Recall-only."""
 
     surface: str
@@ -295,7 +295,7 @@ def scan_safe_text(
     segments: Sequence[SanitizedSegment], text_of=lambda s: s.scrubbed
 ) -> str:
     """Join segment text with a hard newline between every segment, for feeding
-    into :func:`find_miss_candidates` (or any other regex/heuristic scan) — never
+    into :func:`find_miss_candidates` (or any other regex/heuristic scan), never
     for display or copy.
 
     ``_CAP_RUN_RE``'s inter-word gap is deliberately horizontal-only ([ \\t]) so a
@@ -303,7 +303,8 @@ def scan_safe_text(
     exists in no single segment (e.g. one segment ending "...about Karen" and the
     next starting "Karen again" must never read as the single run "Karen Karen
     again"). ``_join_as_paragraphs`` (used for ``scrubbed_text``/display) breaks
-    that invariant on purpose, for readability — so scanning needs its own join.
+    that invariant on purpose, for readability. Scanning needs its own join as
+    a result.
     """
     return "\n".join(text_of(segment) for segment in segments)
 
@@ -397,7 +398,7 @@ def _suggestion_windows(
 ) -> list[str]:
     """Join consecutive segments' *original* text into ~``window_chars`` blocks.
 
-    A suggestion model needs sentence-sized context — running it on each caption
+    A suggestion model needs sentence-sized context: running it on each caption
     fragment starves it (and is far slower). We give it windows instead; the spans
     it returns are discarded and each surface is re-located per segment below, so a
     phantom that a join might invent simply fails to locate and is dropped.
@@ -443,8 +444,8 @@ def suggest_items(
     The model runs over joined windows (context, speed); each proposed surface is then
     **re-located precisely** in the segments (word-boundary safe), so every placement
     is an exact, splice-safe span regardless of the model's own offsets. Returns one
-    :class:`ReviewItem` per distinct surface — ``SUGGESTED`` tier, ``PENDING`` state,
-    empty placeholder (allocated on approval, like any suggestion) — deduped against
+    :class:`ReviewItem` per distinct surface (``SUGGESTED`` tier, ``PENDING`` state,
+    empty placeholder, allocated on approval like any suggestion), deduped against
     ``known_canonicals`` (declared/PII/existing suggestions) and against itself.
     Surfaces that don't actually occur in any segment (join phantoms) are dropped.
     Each item keeps the model's **highest confidence** across its sightings, so the
@@ -459,7 +460,7 @@ def suggest_items(
                 continue
             existing = proposals.get(canonical)
             if existing is not None:
-                # Same surface in another window — keep the most confident sighting.
+                # Same surface in another window: keep the most confident sighting.
                 existing.score = max(existing.score, detection.score)
                 continue
             proposals[canonical] = _Proposal(

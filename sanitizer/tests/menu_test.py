@@ -26,7 +26,7 @@ def main_window(qtbot):
     from PyQt6.QtWidgets import QApplication, QMainWindow
 
     # Purge any QMainWindow left by an earlier test so find_main_window() is
-    # deterministic — production has exactly one main window. deleteLater alone
+    # deterministic: production has exactly one main window. deleteLater alone
     # isn't enough: DeferredDelete events must be dispatched explicitly, since a
     # plain processEvents() does not flush them.
     app = QApplication.instance()

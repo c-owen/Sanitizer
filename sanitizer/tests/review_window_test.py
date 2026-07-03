@@ -1,7 +1,7 @@
-"""ReviewWindow (v2 UX, Step B) — modes, master-detail context, withheld-unsafe.
+"""ReviewWindow (v2 UX, Step B): modes, master-detail context, withheld-unsafe.
 
 Requires PyQt6 + pytest-qt (skips elsewhere). Drives the window against a sidecar
-written by the pure core into a temp dir — no Buzz, no real cache. Keeps the PG7
+written by the pure core into a temp dir, no Buzz, no real cache. Keeps the PG7
 guarantee (unsafe → no reachable copy path in any mode) and UX-5 (readable without
 colour), and adds Step-B coverage: the three modes, the side-by-side context pane,
 the empty-state scan evidence, and the restore unresolved-tag report.
@@ -69,12 +69,14 @@ def _meta(sanitization, clean=True, **extra):
     return meta
 
 
-def _write_sidecar(directory):
+def _write_sidecar(directory, **extra_meta):
     sanitization = sanitize_transcript(
         [Seg(0, 1000, "Call Jane"), Seg(1000, 2000, "bye Jane")],
         [DeclaredListDetector(["Jane"])],
     )
-    persistence.write_sidecar(directory / "5", sanitization, _meta(sanitization))
+    persistence.write_sidecar(
+        directory / "5", sanitization, _meta(sanitization, **extra_meta)
+    )
     return sanitization
 
 
@@ -236,6 +238,21 @@ def test_empty_state_when_no_sidecars(tmp_path, qtbot):
     assert window._selector.count() == 0
     assert window._group_removed.childCount() == 0
     assert "No sanitized transcripts" in window._spine_label.text()
+
+
+def test_selector_shows_the_source_name_when_known(tmp_path, qtbot):
+    _write_sidecar(tmp_path, source_name="council meeting.mp3")
+    window = _new_window(tmp_path, qtbot)
+
+    assert window._selector.itemText(0) == "council meeting.mp3"
+    assert window._selector.itemData(0) == "5"  # id still drives loading, not the label
+
+
+def test_selector_falls_back_to_the_id_when_source_name_is_unknown(tmp_path, qtbot):
+    _write_sidecar(tmp_path)  # older sidecar, predates source_name
+    window = _new_window(tmp_path, qtbot)
+
+    assert window._selector.itemText(0) == "5"
 
 
 # --- context / side-by-side (UX-2) ------------------------------------------
@@ -567,7 +584,7 @@ def test_add_to_list_promotes_the_term_to_the_declared_store(tmp_path, qtbot):
     assert "Karen" in read_declared_terms(tmp_path)
 
 
-# --- Step D: scale — filter the decision tree -------------------------------
+# --- Step D: scale, filter the decision tree ---------------------------------
 def test_filter_narrows_the_decision_rows(tmp_path, qtbot):
     _write_two_terms(tmp_path)
     window = _new_window(tmp_path, qtbot)
@@ -603,7 +620,7 @@ def _write_plain(directory):
 
 
 class _BoomProvider:
-    """A provider whose model always fails — to prove failure is surfaced, not empty."""
+    """A provider whose model always fails: proves failure is surfaced, not empty."""
 
     def model_present(self):
         return True
@@ -666,7 +683,7 @@ def test_run_suggestions_auto_applies_when_opted_in(tmp_path, qtbot):
 
 # --- live suggestion triage (the ~222-item problem) -------------------------
 class _ScoredProvider:
-    """Finds each ``(surface, label, score)`` everywhere it appears — a richer stub
+    """Finds each ``(surface, label, score)`` everywhere it appears: a richer stub
     than _StubProvider, for exercising the confidence / type / mention filters."""
 
     def __init__(self, *specs):
@@ -885,7 +902,7 @@ def test_spine_cautions_when_a_guaranteed_item_is_kept_in_cleartext(tmp_path, qt
 
 def test_stale_suggestion_result_is_discarded_not_applied(tmp_path, qtbot):
     # A scan that started on transcript A must never land on transcript B if the user
-    # switched in between (its placements index A's segments — applying corrupts B).
+    # switched in between (its placements index A's segments; applying corrupts B).
     from sanitizer_core import DecisionState, TrustTier
     from sanitizer_core.transcript import Placement, ReviewItem
 

@@ -1,4 +1,4 @@
-"""VerificationGate — the independent, fail-closed re-check (FR-6, PG7)."""
+"""VerificationGate: the independent, fail-closed re-check (FR-6, PG7)."""
 
 from __future__ import annotations
 

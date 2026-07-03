@@ -1,4 +1,4 @@
-"""The FormatHandler interface — how scrubbed text leaves, and how returned text
+"""The FormatHandler interface: how scrubbed text leaves, and how returned text
 comes back, for a given format (FR-24)."""
 
 from __future__ import annotations

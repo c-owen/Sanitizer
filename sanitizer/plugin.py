@@ -1,4 +1,4 @@
-"""Sanitizer — a reversible, offline sensitive-information sanitizer for Buzz.
+"""Sanitizer: a reversible, offline sensitive-information sanitizer for Buzz.
 
 This module is the thin :class:`BuzzPlugin` host glue: it declares Sanitizer's
 identity + config, attaches Sanitizer's UI (a "Sanitizer" menu → review/restore) to the
@@ -6,7 +6,7 @@ main window using only public Qt APIs **without modifying Buzz**, and on
 ``on_complete`` runs the host-independent sanitizer over the finished transcript,
 writing a sidecar keyed by ``transcription_id`` (the stored transcript is never
 touched). All the safety-critical logic lives in ``sanitizer_core``, which is
-kept host-independent by design (no ``buzz``/``PyQt6`` imports — see
+kept host-independent by design (no ``buzz``/``PyQt6`` imports, see
 ``boundary_test.py``).
 
 Buzz loads this file as a standalone module (``buzz_plugin_sanitizer``) by file
@@ -21,8 +21,8 @@ import os
 import sys
 
 # --- import bootstrap -------------------------------------------------------
-# Buzz execs this file via ``importlib.spec_from_file_location`` — i.e. as a
-# top-level module, not part of a package — so relative imports do not resolve.
+# Buzz execs this file via ``importlib.spec_from_file_location`` (as a top-level
+# module, not part of a package), so relative imports do not resolve.
 # Putting the plugin root on ``sys.path`` lets ``import sanitizer_core`` /
 # ``sanitizer_host`` work both inside Buzz and under pytest.
 _PLUGIN_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -44,6 +44,20 @@ logger = logging.getLogger(__name__)
 _ = plugin_gettext(__file__)
 
 
+def _source_name(task) -> str | None:
+    """A short display label for ``task``'s source, or ``None`` if unavailable.
+
+    Buzz's ``on_complete`` hook hands the plugin a ``FileTranscriptionTask`` with
+    no display-name field of its own, only ``file_path``/``url``; there is no
+    public API to look one up later from just a transcription id. So this is
+    captured now, at hook time, rather than reconstructed afterward.
+    """
+    file_path = getattr(task, "file_path", None)
+    if file_path:
+        return os.path.basename(file_path)
+    return getattr(task, "url", None) or None
+
+
 class SanitizerPlugin(BuzzPlugin):
     """Buzz plugin entry point for Sanitizer.
 
@@ -56,7 +70,7 @@ class SanitizerPlugin(BuzzPlugin):
     ``on_complete`` runs on a background thread (no Qt touched there).
     Guarantees: ``__init__`` never raises (a UI-attach failure is logged and the
     plugin still loads); ``on_complete`` never raises into the host and never
-    modifies the stored transcript — it only writes Sanitizer's own sidecar.
+    modifies the stored transcript: it only writes Sanitizer's own sidecar.
     """
 
     metadata = PluginMetadata(
@@ -67,7 +81,7 @@ class SanitizerPlugin(BuzzPlugin):
             "transcripts. Replace names, PII and codenames before sending text "
             "to a cloud LLM, then restore the originals from a local key."
         ),
-        version="0.7.1",
+        version="0.7.2",
         pip_dependencies=[],  # guaranteed path is dependency-free + offline
         config_fields=[
             ConfigField(
@@ -139,7 +153,7 @@ class SanitizerPlugin(BuzzPlugin):
         """Sanitize the saved transcript and persist Sanitizer's sidecar.
 
         Runs on a background thread after the transcript is stored. Treats segments
-        read-only and writes a sidecar keyed by ``transcription_id`` — the stored
+        read-only and writes a sidecar keyed by ``transcription_id``: the stored
         transcript is never modified (PG5). Any failure is contained so the host
         pipeline is never broken.
         """
@@ -150,7 +164,10 @@ class SanitizerPlugin(BuzzPlugin):
             return
         try:
             _directory, result = sanitize_to_sidecar(
-                transcription_id, segments, context.config
+                transcription_id,
+                segments,
+                context.config,
+                source_name=_source_name(task),
             )
         except Exception as exc:  # noqa: BLE001 - never break the host pipeline
             context.log.error(
@@ -159,7 +176,7 @@ class SanitizerPlugin(BuzzPlugin):
             logger.exception("Sanitizer: sanitization failed.")
             return
         context.log.info(
-            "Sanitizer: sanitized transcription %s — removed %d item(s), "
+            "Sanitizer: sanitized transcription %s: removed %d item(s), "
             "%d pending, clean=%s",
             transcription_id,
             result.removed_items,

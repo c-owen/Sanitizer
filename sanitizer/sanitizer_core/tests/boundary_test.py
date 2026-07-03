@@ -1,4 +1,4 @@
-"""Guarantee: sanitizer_core is host-independent — it imports neither buzz nor Qt.
+"""Guarantee: sanitizer_core is host-independent; it imports neither buzz nor Qt.
 
 This is the brief's "verifiable independently of the Buzz app" mandate, enforced
 by AST scan so a regression fails the build (G5 / DoD).

@@ -4,7 +4,7 @@ For v1 this is a pass-through, and deliberately so: a transcript is already vali
 CommonMark, and the placeholder scheme is markdown-safe (FR-23), so the tokens
 survive rendering untouched. Restore is substring-based, so when the returned
 markdown wraps a token (``**{{NAME-1}}**``, `` `{{NAME-1}}` ``, a list item, a
-block quote), the token is still found and replaced — the surrounding formatting
+block quote), the token is still found and replaced: the surrounding formatting
 is preserved. Richer markdown handling (e.g. escaping) is unnecessary for the
 round trip and would alter the user's text, so we don't do it.
 """

@@ -22,7 +22,7 @@ def test_sanitizer_loads_via_buzz_loader():
 
     assert plugin.metadata.id == "sanitizer"
     assert plugin.metadata.name  # non-empty display name
-    assert plugin.metadata.version == "0.7.1"
+    assert plugin.metadata.version == "0.7.2"
 
 
 def test_sanitizer_is_a_buzz_plugin_instance():
@@ -37,7 +37,7 @@ def test_sanitizer_is_a_buzz_plugin_instance():
 
 
 def test_sanitizer_declares_no_pip_dependencies():
-    """Phase 0 must install and run fully offline — no deps to fetch."""
+    """Phase 0 must install and run fully offline: no deps to fetch."""
     loader = pytest.importorskip("buzz.plugins.loader")
 
     plugin = loader.load_plugin_from_dir(str(_SANITIZER_DIR))

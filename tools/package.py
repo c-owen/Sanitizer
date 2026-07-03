@@ -1,8 +1,8 @@
 """Package the Sanitizer plugin folder into ``dist/sanitizer.zip`` for local serving.
 
 The archive places ``plugin.py`` at its root (Buzz's loader also accepts a
-single wrapping directory). Development-only files — tests, tooling config,
-notes and caches — are excluded so the distributable stays lean.
+single wrapping directory). Development-only files (tests, tooling config,
+notes and caches) are excluded so the distributable stays lean.
 
 Usage::
 
@@ -28,7 +28,7 @@ _EXCLUDE_DIRS = frozenset(
 _EXCLUDE_ROOT_FILES = frozenset({"pyproject.toml", "DEV_NOTES.md"})
 # File suffixes excluded anywhere.
 _EXCLUDE_SUFFIXES = frozenset({".pyc", ".pyo"})
-# Specific vendored subtrees the plugin never imports — kept verbatim in-repo (so the
+# Specific vendored subtrees the plugin never imports. Kept verbatim in-repo (so the
 # `_vendor/README.md` update procedure stays "unpack the wheel"), but pruned from the
 # distributable. `gliner/serve` is a Ray/HTTP inference server (binds localhost); Sanitizer
 # only does in-process `GLiNER.from_pretrained(...).predict_entities(...)`, so shipping a

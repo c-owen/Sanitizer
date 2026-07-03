@@ -1,4 +1,4 @@
-"""Where Sanitizer keeps its sidecars — inside Buzz's cache, beside Buzz's own data.
+"""Where Sanitizer keeps its sidecars: inside Buzz's cache, beside Buzz's own data.
 
 Host-only: this is the single place that knows the on-disk location, so the pure
 core never hard-codes a path (it takes the directory injected). Mirrors Buzz's own

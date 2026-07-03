@@ -1,4 +1,4 @@
-"""Sanitizer — declared-tier replacement, consistency, determinism, empty state."""
+"""Sanitizer: declared-tier replacement, consistency, determinism, empty state."""
 
 from __future__ import annotations
 
